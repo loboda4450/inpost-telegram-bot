@@ -1,7 +1,7 @@
 bot_token: 1234567890:ABCDEFGHIJKLMNOUPRSTUWXYZ123456789100
 
 telethon_settings:
-  session: PingBot
+  session: InpostBot
   auto_reconnect: true
   retry_delay: 15
   connection_retries: -1

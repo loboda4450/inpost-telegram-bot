@@ -1,2 +1,2 @@
-PyYAML
-Telethon
+PyYAML~=6.0
+Telethon ~=1.26.1
