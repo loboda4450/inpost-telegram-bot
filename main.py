@@ -11,7 +11,7 @@ from inpost.static import Parcel, ParcelStatus
 from inpost.api import Inpost
 
 
-async def main(config, inp: Dict[Inpost]):
+async def main(config, inp: Dict):
     logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=config['log_level'])
     logger = logging.getLogger(__name__)
     client = TelegramClient(**config['telethon_settings'])
@@ -27,7 +27,14 @@ async def main(config, inp: Dict[Inpost]):
     async def start(event):
         await event.reply('Hello!\nThis is a bot helping you to manage your InPost parcels!\n\n'
                           'Log in using button that just shown up below the text box '
-                          'or by typing `/init <phone_number>`!',
+                          'or by typing `/init <phone_number>`!\n\n'
+                          'List of commands:\n'
+                          'start - display start message and allow user to login with Telegram '
+                          '/init - login using phone number /init <phone_number>'
+                          '/confirm - confirm login with sms code /confirm <sms_code>'
+                          '/pending - return pending parcels'
+                          '/delivered - return delivered parcels'
+                          '/all - return all (last 28) parcels',
                           buttons=[Button.request_phone('Log in via Telegram')])
 
     @client.on(NewMessage())
@@ -53,25 +60,50 @@ async def main(config, inp: Dict[Inpost]):
     async def confirm_sms(event):
         if event.sender.id in inp and event.text.split()[1]:
             if await inp[event.sender.id].confirm_sms_code(event.text.split()[1].strip()):
-                await event.reply(f'Succesfully verifed!')
+                await event.reply(f'Succesfully verifed!', buttons=[Button.inline('Pending Parcels'),
+                                                                    Button.inline('Delivered Parcels')])
             else:
                 await event.reply('You fucked up')
 
-    @client.on(NewMessage(pattern='/packs'))
+    @client.on(NewMessage(pattern='/pending'))
+    @client.on(NewMessage(pattern='/delivered'))
+    @client.on(NewMessage(pattern='/all'))
+    @client.on(CallbackQuery(pattern=b'Pending Parcels'))
+    @client.on(CallbackQuery(pattern=b'Delivered Parcels'))
     async def get_packages(event):
         if event.sender.id in inp:
-            p: List[Parcel] = await inp[event.sender.id].get_parcels(parse=True)
-            for package in p:
-                await event.reply(f'Shipment number: {package.shipment_number}\n'
-                                  f'Status: {package.status.value}\n'
-                                  f'Pickup point: {package.pickup_point}',
-                                  buttons=[
+            if isinstance(event, CallbackQuery.Event):
+                if event.data == b'Pending Parcels':
+                    status = ParcelStatus.READY_TO_PICKUP
+                elif event.data == b'Delivered Parcels':
+                    status = ParcelStatus.DELIVERED
+            elif isinstance(event, NewMessage.Event):
+                if event.text == '/pending':
+                    status = ParcelStatus.READY_TO_PICKUP
+                elif event.text == '/delivered':
+                    status = ParcelStatus.DELIVERED
+                else:
+                    status = None
+
+            p: List[Parcel] = await inp[event.sender.id].get_parcels(status=status, parse=True)
+            if len(p) > 0:
+                for package in p:
+                    await event.reply(f'Shipment number: {package.shipment_number}\n'
+                                      f'Status: {package.status.value}\n'
+                                      f'Pickup point: {package.pickup_point}',
+                                      buttons=[
+                                          [Button.inline('Open Code'),
+                                           Button.inline('QR Code')],
+                                          [Button.inline('Open')]] if package.status != ParcelStatus.DELIVERED else
                                       [Button.inline('Open Code'),
-                                       Button.inline('QR Code')],
-                                      [Button.inline('Open')]] if package.status != ParcelStatus.DELIVERED else
-                                  [Button.inline('Open Code'),
-                                   Button.inline('QR Code')]
-                                  )
+                                       Button.inline('QR Code')]
+                                      )
+            else:
+                if isinstance(event, CallbackQuery.Event):
+                    await event.answer('No parcels with specified status!', alert=True)
+                elif isinstance(event, NewMessage.Event):
+                    await event.reply('No parcels with specified status!')
+
         else:
             await event.reply('Bwoy, you are not initialized')
 
