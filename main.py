@@ -34,7 +34,7 @@ async def main(config, inp: Dict):
                           '/confirm - confirm login with sms code /confirm <sms_code>\n'
                           '/pending - return pending parcels\n'
                           '/delivered - return delivered parcels\n'
-                          '/all - return all (last 28) parcels',
+                          '/all - return all available parcels',
                           buttons=[Button.request_phone('Log in via Telegram')])
 
     @client.on(NewMessage())
@@ -64,6 +64,26 @@ async def main(config, inp: Dict):
                                                                     Button.inline('Delivered Parcels')])
             else:
                 await event.reply('You fucked up')
+
+    @client.on(NewMessage(pattern='/parcel'))
+    async def get_parcel(event):
+        if event.sender.id in inp and event.text.split(' ')[1]:
+            package: Parcel = await inp[event.sender.id].get_parcel(shipment_number=event.text.split(' ')[1].strip(),
+                                                                    parse=True)
+
+            await event.reply(f'Sender: {package.sender.sender_name}\n'
+                              f'Shipment number: {package.shipment_number}\n'
+                              f'Status: {package.status.value}\n'
+                              f'Pickup point: {package.pickup_point}',
+                              buttons=[
+                                  [Button.inline('Open Code'),
+                                   Button.inline('QR Code')],
+                                  [Button.inline('Open')]] if package.status != ParcelStatus.DELIVERED else
+                              [Button.inline('Open Code'),
+                               Button.inline('QR Code')]
+                              )
+        else:
+            await event.reply('Bwoy, you are not initialized')
 
     @client.on(NewMessage(pattern='/pending'))
     @client.on(NewMessage(pattern='/delivered'))
