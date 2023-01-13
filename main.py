@@ -141,7 +141,7 @@ async def main(config, inp: Dict):
     async def open_compartment(event):
         if event.sender.id in inp:
             msg = await event.get_message()
-            shipment_number = msg.raw_text.split('\n')[0].split(':')[1].strip()
+            shipment_number = msg.raw_text.split('\n')[1].split(':')[1].strip()
             p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
 
             match p.status:
