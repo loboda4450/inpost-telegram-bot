@@ -29,11 +29,11 @@ async def main(config, inp: Dict):
                           'Log in using button that just shown up below the text box '
                           'or by typing `/init <phone_number>`!\n\n'
                           'List of commands:\n'
-                          'start - display start message and allow user to login with Telegram '
-                          '/init - login using phone number /init <phone_number>'
-                          '/confirm - confirm login with sms code /confirm <sms_code>'
-                          '/pending - return pending parcels'
-                          '/delivered - return delivered parcels'
+                          'start - display start message and allow user to login with Telegram\n'
+                          '/init - login using phone number /init <phone_number>\n'
+                          '/confirm - confirm login with sms code /confirm <sms_code>\n'
+                          '/pending - return pending parcels\n'
+                          '/delivered - return delivered parcels\n'
                           '/all - return all (last 28) parcels',
                           buttons=[Button.request_phone('Log in via Telegram')])
 
@@ -46,15 +46,15 @@ async def main(config, inp: Dict):
         else:
             return
 
-        if event.sender.id not in inp:
-            inp[event.sender.id] = Inpost()
-            await inp[event.sender.id].set_phone_number(phone_number=phone_number)
-            if await inp[event.sender.id].send_sms_code():
-                await event.reply(f'Initialized with phone number: {inp[event.sender.id].phone_number}!'
-                                  f'\nSending sms code!')
+        if event.sender.id in inp:
+            del inp[event.sender.id]
+            await event.reply('You were initialized before, reinitializing')
 
-        else:
-            await event.reply('Bwoy, you are already initialized')
+        inp[event.sender.id] = Inpost()
+        await inp[event.sender.id].set_phone_number(phone_number=phone_number)
+        if await inp[event.sender.id].send_sms_code():
+            await event.reply(f'Initialized with phone number: {inp[event.sender.id].phone_number}!'
+                              f'\nSending sms code!', buttons=Button.clear())
 
     @client.on(NewMessage(pattern='/confirm'))
     async def confirm_sms(event):
@@ -72,23 +72,35 @@ async def main(config, inp: Dict):
     @client.on(CallbackQuery(pattern=b'Delivered Parcels'))
     async def get_packages(event):
         if event.sender.id in inp:
+            status = None
             if isinstance(event, CallbackQuery.Event):
                 if event.data == b'Pending Parcels':
-                    status = ParcelStatus.READY_TO_PICKUP
+                    status = [ParcelStatus.READY_TO_PICKUP, ParcelStatus.CONFIRMED,
+                              ParcelStatus.ADOPTED_AT_SORTING_CENTER, ParcelStatus.ADOPTED_AT_SOURCE_BRANCH,
+                              ParcelStatus.COLLECTED_FROM_SENDER, ParcelStatus.DISPATCHED_BY_SENDER,
+                              ParcelStatus.DISPATCHED_BY_SENDER_TO_POK, ParcelStatus.OUT_FOR_DELIVERY,
+                              ParcelStatus.OUT_FOR_DELIVERY_TO_ADDRESS, ParcelStatus.SENT_FROM_SOURCE_BRANCH,
+                              ParcelStatus.TAKEN_BY_COURIER, ParcelStatus.TAKEN_BY_COURIER_FROM_POK]
                 elif event.data == b'Delivered Parcels':
                     status = ParcelStatus.DELIVERED
             elif isinstance(event, NewMessage.Event):
                 if event.text == '/pending':
-                    status = ParcelStatus.READY_TO_PICKUP
+                    status = [ParcelStatus.READY_TO_PICKUP, ParcelStatus.CONFIRMED,
+                              ParcelStatus.ADOPTED_AT_SORTING_CENTER, ParcelStatus.ADOPTED_AT_SOURCE_BRANCH,
+                              ParcelStatus.COLLECTED_FROM_SENDER, ParcelStatus.DISPATCHED_BY_SENDER,
+                              ParcelStatus.DISPATCHED_BY_SENDER_TO_POK, ParcelStatus.OUT_FOR_DELIVERY,
+                              ParcelStatus.OUT_FOR_DELIVERY_TO_ADDRESS, ParcelStatus.SENT_FROM_SOURCE_BRANCH,
+                              ParcelStatus.TAKEN_BY_COURIER, ParcelStatus.TAKEN_BY_COURIER_FROM_POK]
                 elif event.text == '/delivered':
                     status = ParcelStatus.DELIVERED
                 else:
-                    status = None
+                    pass
 
             p: List[Parcel] = await inp[event.sender.id].get_parcels(status=status, parse=True)
             if len(p) > 0:
                 for package in p:
-                    await event.reply(f'Shipment number: {package.shipment_number}\n'
+                    await event.reply(f'Sender: {package.sender.sender_name}\n'
+                                      f'Shipment number: {package.shipment_number}\n'
                                       f'Status: {package.status.value}\n'
                                       f'Pickup point: {package.pickup_point}',
                                       buttons=[
@@ -111,7 +123,7 @@ async def main(config, inp: Dict):
     async def send_qr_code(event):
         if event.sender.id in inp:
             msg = await event.get_message()
-            shipment_number = msg.raw_text.split('\n')[0].split(':')[1].strip()
+            shipment_number = msg.raw_text.split('\n')[1].split(':')[1].strip()
             p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
 
             await event.reply(file=p.generate_qr_image)
@@ -120,7 +132,7 @@ async def main(config, inp: Dict):
     async def show_open_code(event):
         if event.sender.id in inp:
             msg = await event.get_message()
-            shipment_number = msg.raw_text.split('\n')[0].split(':')[1].strip()
+            shipment_number = msg.raw_text.split('\n')[1].split(':')[1].strip()
             p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
 
             await event.answer(f'This parcel open code is: {p.open_code}', alert=True)
