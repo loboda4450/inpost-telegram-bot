@@ -8,6 +8,7 @@ from telethon import TelegramClient, Button
 from telethon.events import NewMessage, CallbackQuery
 
 from inpost.static import Parcel, ParcelStatus
+from inpost.static.exceptions import *
 from inpost.api import Inpost
 
 
@@ -39,51 +40,88 @@ async def main(config, inp: Dict):
 
     @client.on(NewMessage())
     async def init(event):
-        if event.text.startswith('/init'):
-            phone_number = event.text.split()[1].strip()
-        elif event.message.contact:
+        if event.message.contact:  # first check if NewMessage contains contact field
             phone_number = event.message.contact.phone_number[-9:]  # cut the region part, 9 last digits
+        elif not event.text.startswith('/init'):  # then check if starts with /init, if so proceed
+            return
+        elif len(event.text.split(' ')) == 2:
+            phone_number = event.text.split()[1].strip()
         else:
+            await event.reply('Something is wrong with provided phone number')
             return
 
         if event.sender.id in inp:
             del inp[event.sender.id]
             await event.reply('You were initialized before, reinitializing')
+        try:
+            inp[event.sender.id] = Inpost()
+            await inp[event.sender.id].set_phone_number(phone_number=phone_number)
+            if await inp[event.sender.id].send_sms_code():
+                await event.reply(f'Initialized with phone number: {inp[event.sender.id].phone_number}!'
+                                  f'\nSending sms code!', buttons=Button.clear())
 
-        inp[event.sender.id] = Inpost()
-        await inp[event.sender.id].set_phone_number(phone_number=phone_number)
-        if await inp[event.sender.id].send_sms_code():
-            await event.reply(f'Initialized with phone number: {inp[event.sender.id].phone_number}!'
-                              f'\nSending sms code!', buttons=Button.clear())
+        except PhoneNumberError as e:
+            await event.reply(e.reason)
+        except UnauthorizedError:
+            await event.reply('You are not authorized')
+        except NotFoundError:
+            await event.reply('Provided phone number does not exist')
+        except UnidentifiedAPIError:
+            await event.reply('Unexpected error occurred, call admin')
 
     @client.on(NewMessage(pattern='/confirm'))
     async def confirm_sms(event):
-        if event.sender.id in inp and event.text.split()[1]:
-            if await inp[event.sender.id].confirm_sms_code(event.text.split()[1].strip()):
-                await event.reply(f'Succesfully verifed!', buttons=[Button.inline('Pending Parcels'),
-                                                                    Button.inline('Delivered Parcels')])
-            else:
-                await event.reply('You fucked up')
+        if event.sender.id in inp and len(event.text.split()) == 2:
+            try:
+                if await inp[event.sender.id].confirm_sms_code(event.text.split()[1].strip()):
+                    await event.reply(f'Succesfully verifed!', buttons=[Button.inline('Pending Parcels'),
+                                                                        Button.inline('Delivered Parcels')])
+                else:
+                    await event.reply('You fucked up')
+
+            except PhoneNumberError as e:
+                await event.reply(e.reason)
+            except SmsCodeError as e:
+                await event.reply(e.reason)
+            except UnauthorizedError:
+                await event.reply('You are not authorized')
+            except NotFoundError:
+                await event.reply('Provided phone number does not exist')
+            except UnidentifiedAPIError:
+                await event.reply('Unexpected error occurred, call admin')
+        else:
+            await event.reply('No sms code provided or not initialized')
 
     @client.on(NewMessage(pattern='/parcel'))
     async def get_parcel(event):
-        if event.sender.id in inp and event.text.split(' ')[1]:
-            package: Parcel = await inp[event.sender.id].get_parcel(shipment_number=event.text.split(' ')[1].strip(),
-                                                                    parse=True)
+        if event.sender.id in inp and len(event.text.split(' ')) == 2:
+            try:
+                package: Parcel = await inp[event.sender.id].get_parcel(
+                    shipment_number=event.text.split(' ')[1].strip(),
+                    parse=True)
 
-            await event.reply(f'Sender: {package.sender.sender_name}\n'
-                              f'Shipment number: {package.shipment_number}\n'
-                              f'Status: {package.status.value}\n'
-                              f'Pickup point: {package.pickup_point}',
-                              buttons=[
+                await event.reply(f'Sender: {package.sender.sender_name}\n'
+                                  f'Shipment number: {package.shipment_number}\n'
+                                  f'Status: {package.status.value}\n'
+                                  f'Pickup point: {package.pickup_point}',
+                                  buttons=[
+                                      [Button.inline('Open Code'),
+                                       Button.inline('QR Code')],
+                                      [Button.inline('Open Compartment')]] if package.status != ParcelStatus.DELIVERED else
                                   [Button.inline('Open Code'),
-                                   Button.inline('QR Code')],
-                                  [Button.inline('Open')]] if package.status != ParcelStatus.DELIVERED else
-                              [Button.inline('Open Code'),
-                               Button.inline('QR Code')]
-                              )
+                                   Button.inline('QR Code')]
+                                  )
+
+            except NotAuthenticatedError as e:
+                await event.reply(e.reason)
+            except UnauthorizedError:
+                await event.reply('You are not authorized')
+            except NotFoundError:
+                await event.reply('Parcel does not exist!')
+            except UnidentifiedAPIError:
+                await event.reply('Unexpected error occurred, call admin')
         else:
-            await event.reply('Bwoy, you are not initialized')
+            await event.reply('No shipment number provided or not initialized')
 
     @client.on(NewMessage(pattern='/pending'))
     @client.on(NewMessage(pattern='/delivered'))
@@ -115,62 +153,124 @@ async def main(config, inp: Dict):
                     status = ParcelStatus.DELIVERED
                 else:
                     pass
-
-            p: List[Parcel] = await inp[event.sender.id].get_parcels(status=status, parse=True)
-            if len(p) > 0:
-                for package in p:
-                    await event.reply(f'Sender: {package.sender.sender_name}\n'
-                                      f'Shipment number: {package.shipment_number}\n'
-                                      f'Status: {package.status.value}\n'
-                                      f'Pickup point: {package.pickup_point}',
-                                      buttons=[
+            try:
+                p: List[Parcel] = await inp[event.sender.id].get_parcels(status=status, parse=True)
+                if len(p) > 0:
+                    for package in p:
+                        await event.reply(f'Sender: {package.sender.sender_name}\n'
+                                          f'Shipment number: {package.shipment_number}\n'
+                                          f'Status: {package.status.value}\n'
+                                          f'Pickup point: {package.pickup_point}',
+                                          buttons=[
+                                              [Button.inline('Open Code'),
+                                               Button.inline('QR Code')],
+                                              [Button.inline('Open')]] if package.status != ParcelStatus.DELIVERED else
                                           [Button.inline('Open Code'),
-                                           Button.inline('QR Code')],
-                                          [Button.inline('Open')]] if package.status != ParcelStatus.DELIVERED else
-                                      [Button.inline('Open Code'),
-                                       Button.inline('QR Code')]
-                                      )
-            else:
-                if isinstance(event, CallbackQuery.Event):
-                    await event.answer('No parcels with specified status!', alert=True)
-                elif isinstance(event, NewMessage.Event):
-                    await event.reply('No parcels with specified status!')
+                                           Button.inline('QR Code')]
+                                          )
+                else:
+                    if isinstance(event, CallbackQuery.Event):
+                        await event.answer('No parcels with specified status!', alert=True)
+                    elif isinstance(event, NewMessage.Event):
+                        await event.reply('No parcels with specified status!')
+
+            except NotAuthenticatedError as e:
+                await event.reply(e.reason)
+            except ParcelTypeError as e:
+                await event.reply(e.reason)
+            except UnauthorizedError:
+                await event.reply('You are not authorized to fetch parcels!')
+            except NotFoundError:
+                await event.reply('No parcels found!')
+            except UnidentifiedAPIError:
+                await event.reply('Unexpected error occurred, call admin')
+            except Exception:
+                await event.reply('Bad things happened, call admin now!')
 
         else:
-            await event.reply('Bwoy, you are not initialized')
+            await event.reply('You are not initialized')
 
     @client.on(CallbackQuery(pattern=b'QR Code'))
     async def send_qr_code(event):
         if event.sender.id in inp:
             msg = await event.get_message()
             shipment_number = msg.raw_text.split('\n')[1].split(':')[1].strip()
-            p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
+            try:
+                p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
 
-            await event.reply(file=p.generate_qr_image)
+                await event.reply(file=p.generate_qr_image)
+
+            except NotAuthenticatedError as e:
+                await event.reply(e.reason)
+            except ParcelTypeError as e:
+                await event.reply(e.reason)
+            except UnauthorizedError:
+                await event.reply('You are not authorized to fetch parcels!')
+            except NotFoundError:
+                await event.reply('No parcels found!')
+            except UnidentifiedAPIError:
+                await event.reply('Unexpected error occurred, call admin')
+            except Exception:
+                await event.reply('Bad things happened, call admin now!')
+        else:
+            await event.reply('You are not initialized')
 
     @client.on(CallbackQuery(pattern=b'Open Code'))
     async def show_open_code(event):
         if event.sender.id in inp:
             msg = await event.get_message()
             shipment_number = msg.raw_text.split('\n')[1].split(':')[1].strip()
-            p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
+            try:
+                p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
 
-            await event.answer(f'This parcel open code is: {p.open_code}', alert=True)
+                await event.answer(f'This parcel open code is: {p.open_code}', alert=True)
 
-    @client.on(CallbackQuery(pattern=b'Open'))
+            except NotAuthenticatedError as e:
+                await event.reply(e.reason)
+            except ParcelTypeError as e:
+                await event.reply(e.reason)
+            except UnauthorizedError:
+                await event.reply('You are not authorized to fetch parcels!')
+            except NotFoundError:
+                await event.reply('No parcels found!')
+            except UnidentifiedAPIError:
+                await event.reply('Unexpected error occurred, call admin')
+            except Exception:
+                await event.reply('Bad things happened, call admin now!')
+
+        else:
+            await event.reply('You are not initialized')
+
+    @client.on(CallbackQuery(pattern=b'Open Compartment'))
     async def open_compartment(event):
         if event.sender.id in inp:
             msg = await event.get_message()
             shipment_number = msg.raw_text.split('\n')[1].split(':')[1].strip()
-            p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
+            try:
+                p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
 
-            match p.status:
-                case ParcelStatus.DELIVERED:
-                    await event.answer('Parcel already delivered!', alert=True)
-                case ParcelStatus.READY_TO_PICKUP:
-                    await inp[event.sender.id].collect(parcel_obj=p)
-                case _:
-                    await event.answer(f'Parcel not ready for pickup! Status: {p.status.value}', alert=True)
+                match p.status:
+                    case ParcelStatus.DELIVERED:
+                        await event.answer('Parcel already delivered!', alert=True)
+                    case ParcelStatus.READY_TO_PICKUP:
+                        await inp[event.sender.id].collect(parcel_obj=p)
+                    case _:
+                        await event.answer(f'Parcel not ready for pickup! Status: {p.status.value}', alert=True)
+
+            except NotAuthenticatedError as e:
+                await event.reply(e.reason)
+            except ParcelTypeError as e:
+                await event.reply(e.reason)
+            except UnauthorizedError:
+                await event.reply('You are not authorized to fetch parcels!')
+            except NotFoundError:
+                await event.reply('No parcels found!')
+            except UnidentifiedAPIError:
+                await event.reply('Unexpected error occurred, call admin')
+            except Exception:
+                await event.reply('Bad things happened, call admin now!')
+        else:
+            await event.reply('You are not initialized')
 
     async with client:
         print("Good morning!")
