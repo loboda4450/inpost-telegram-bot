@@ -65,7 +65,7 @@ async def main(config, inp: Dict):
         except UnauthorizedError:
             await event.reply('You are not authorized')
         except NotFoundError:
-            await event.reply('Provided phone number does not exist')
+            await event.reply('User not found!')
         except UnidentifiedAPIError:
             await event.reply('Unexpected error occurred, call admin')
 
@@ -86,11 +86,28 @@ async def main(config, inp: Dict):
             except UnauthorizedError:
                 await event.reply('You are not authorized')
             except NotFoundError:
-                await event.reply('Provided phone number does not exist')
+                await event.reply('User not found!')
             except UnidentifiedAPIError:
                 await event.reply('Unexpected error occurred, call admin')
         else:
             await event.reply('No sms code provided or not initialized')
+
+    @client.on(NewMessage(pattern='/refresh'))
+    async def refresh_token(event):
+        if event.sender.id in inp:
+            try:
+                if await inp[event.sender.id].refresh_token():
+                    await event.reply('Token refreshed!')
+                else:
+                    await event.reply('Could not refresh token')
+            except RefreshTokenError as e:
+                await event.reply(e.reason)
+            except UnauthorizedError:
+                await event.reply('You are not authorized')
+            except NotFoundError:
+                await event.reply('User not found!')
+            except UnidentifiedAPIError:
+                await event.reply('Unexpected error occurred, call admin')
 
     @client.on(NewMessage(pattern='/parcel'))
     async def get_parcel(event):
@@ -115,7 +132,7 @@ async def main(config, inp: Dict):
             except NotAuthenticatedError as e:
                 await event.reply(e.reason)
             except UnauthorizedError:
-                await event.reply('You are not authorized')
+                await event.reply('You are not authorized, try refreshing token invoking /refresh')
             except NotFoundError:
                 await event.reply('Parcel does not exist!')
             except UnidentifiedAPIError:
@@ -179,7 +196,7 @@ async def main(config, inp: Dict):
             except ParcelTypeError as e:
                 await event.reply(e.reason)
             except UnauthorizedError:
-                await event.reply('You are not authorized to fetch parcels!')
+                await event.reply('You are not authorized to fetch parcels! Try to refresh token `/refresh`')
             except NotFoundError:
                 await event.reply('No parcels found!')
             except UnidentifiedAPIError:
@@ -205,9 +222,9 @@ async def main(config, inp: Dict):
             except ParcelTypeError as e:
                 await event.reply(e.reason)
             except UnauthorizedError:
-                await event.reply('You are not authorized to fetch parcels!')
+                await event.reply('You are not authorized! Try to refresh token `/refresh`')
             except NotFoundError:
-                await event.reply('No parcels found!')
+                await event.reply('Parcel not found!')
             except UnidentifiedAPIError:
                 await event.reply('Unexpected error occurred, call admin')
             except Exception:
@@ -230,9 +247,9 @@ async def main(config, inp: Dict):
             except ParcelTypeError as e:
                 await event.reply(e.reason)
             except UnauthorizedError:
-                await event.reply('You are not authorized to fetch parcels!')
+                await event.reply('You are not authorized! Try to refresh token `/refresh`')
             except NotFoundError:
-                await event.reply('No parcels found!')
+                await event.reply('Parcel not found!')
             except UnidentifiedAPIError:
                 await event.reply('Unexpected error occurred, call admin')
             except Exception:
@@ -262,9 +279,9 @@ async def main(config, inp: Dict):
             except ParcelTypeError as e:
                 await event.reply(e.reason)
             except UnauthorizedError:
-                await event.reply('You are not authorized to fetch parcels!')
+                await event.reply('You are not authorized! Try to refresh token `/refresh`')
             except NotFoundError:
-                await event.reply('No parcels found!')
+                await event.reply('Parcel not found')
             except UnidentifiedAPIError:
                 await event.reply('Unexpected error occurred, call admin')
             except Exception:
