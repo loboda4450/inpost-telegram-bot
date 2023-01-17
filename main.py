@@ -54,21 +54,13 @@ async def show_oc(event, inp, shipment_number):
         await event.answer(f'Parcel not ready for pickup!\nStatus: {p.status.value}', alert=True)
 
 
-async def open_comp(event, inp, shipment_number=None):
-    p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
-
-    match p.status:
-        case ParcelStatus.DELIVERED:
-            await event.answer('Parcel already delivered!', alert=True)
-        case ParcelStatus.READY_TO_PICKUP:
-            await inp[event.sender.id].collect(parcel_obj=p)
-            await event.answer(
-                f'Compartment opened!\nLocation:\n   '
-                f'Side: {p.compartment_location.side}\n   '
-                f'Row: {p.compartment_location.row}\n   '
-                f'Column: {p.compartment_location.column}')
-        case _:
-            await event.answer(f'Parcel not ready for pickup!\nStatus: {p.status.value}', alert=True)
+async def open_comp(event, inp, p: Parcel):
+    await inp[event.sender.id].collect(parcel_obj=p)
+    await event.answer(
+        f'Compartment opened!\nLocation:\n   '
+        f'Side: {p.compartment_location.side}\n   '
+        f'Row: {p.compartment_location.row}\n   '
+        f'Column: {p.compartment_location.column}')
 
 
 async def main(config, inp: Dict):
@@ -140,10 +132,10 @@ async def main(config, inp: Dict):
         except UnauthorizedError:
             await event.reply('You are not authorized')
         except UnidentifiedAPIError as e:
-            logger.error(e)
+            logger.exception(e)
             await event.reply('Unexpected error occurred, call admin')
         except Exception as e:
-            logger.error(e)
+            logger.exception(e)
             await event.reply('Bad things happened, call admin now!')
 
     @client.on(NewMessage(pattern='/confirm'))
@@ -168,10 +160,10 @@ async def main(config, inp: Dict):
             except UnauthorizedError:
                 await event.reply('You are not authorized, initialize first!')
             except UnidentifiedAPIError as e:
-                logger.error(e)
+                logger.exception(e)
                 await event.reply('Unexpected error occurred, call admin')
             except Exception as e:
-                logger.error(e)
+                logger.exception(e)
                 await event.reply('Bad things happened, call admin now!')
         else:
             await event.reply('No sms code provided or not initialized')
@@ -194,10 +186,10 @@ async def main(config, inp: Dict):
             except UnauthorizedError:
                 await event.reply('You are not authorized, initialize again')
             except UnidentifiedAPIError as e:
-                logger.error(e)
+                logger.exception(e)
                 await event.reply('Unexpected error occurred, call admin')
             except Exception as e:
-                logger.error(e)
+                logger.exception(e)
                 await event.reply('Bad things happened, call admin now!')
 
     @client.on(NewMessage(pattern='/parcel'))
@@ -242,17 +234,21 @@ async def main(config, inp: Dict):
                                           [Button.inline('Open Code'),
                                            Button.inline('QR Code')]
                                           )
+                    except NotFoundError:
+                        await event.reply('This parcel does not exist or does not belong to you!')
                     except Exception as e:
-                        logger.error(e)
+                        logger.exception(e)
                         await event.reply('Bad things happened, call admin now!')
                 else:
                     await event.reply('You are not authorized, initialize first!')
-
+            except NotFoundError as e:
+                logger.exception(e)
+                await event.reply('This parcel does not exist or does not belong to you!')
             except UnidentifiedAPIError as e:
-                logger.error(e)
-                await event.reply('Unexpected error occurred, call admin')
+                logger.exception(e)
+                await event.reply('Unexpected exception occurred, call admin')
             except Exception as e:
-                logger.error(e)
+                logger.exception(e)
                 await event.reply('Bad things happened, call admin now!')
         else:
             await event.reply('No shipment number provided or not initialized')
@@ -301,7 +297,7 @@ async def main(config, inp: Dict):
                         await send_pcgs(event, inp, status)
 
                     except Exception as e:
-                        logger.error(e)
+                        logger.exception(e)
                         await event.reply('Bad things happened, call admin now!')
                 else:
                     await event.reply('You are not authorized, initialize first!')
@@ -309,10 +305,10 @@ async def main(config, inp: Dict):
             except NotFoundError:
                 await event.reply('No parcels found!')
             except UnidentifiedAPIError as e:
-                logger.error(e)
+                logger.exception(e)
                 await event.reply('Unexpected error occurred, call admin')
             except Exception as e:
-                logger.error(e)
+                logger.exception(e)
                 await event.reply('Bad things happened, call admin now!')
 
         else:
@@ -336,7 +332,7 @@ async def main(config, inp: Dict):
                         await send_qrc(event, inp, shipment_number)
 
                     except Exception as e:
-                        logger.error(e)
+                        logger.exception(e)
                         await event.reply('Bad things happened, call admin now!')
                 else:
                     await event.reply('You are not authorized, initialize first!')
@@ -344,10 +340,10 @@ async def main(config, inp: Dict):
             except NotFoundError:
                 await event.reply('Parcel not found!')
             except UnidentifiedAPIError as e:
-                logger.error(e)
+                logger.exception(e)
                 await event.reply('Unexpected error occurred, call admin')
             except Exception as e:
-                logger.error(e)
+                logger.exception(e)
                 await event.reply('Bad things happened, call admin now!')
         else:
             await event.reply('You are not initialized')
@@ -369,7 +365,7 @@ async def main(config, inp: Dict):
                         await show_oc(event, inp, shipment_number)
 
                     except Exception as e:
-                        logger.error(e)
+                        logger.exception(e)
                         await event.reply('Bad things happened, call admin now!')
                 else:
                     await event.reply('You are not authorized, initialize first!')
@@ -377,10 +373,10 @@ async def main(config, inp: Dict):
             except NotFoundError:
                 await event.reply('Parcel not found!')
             except UnidentifiedAPIError as e:
-                logger.error(e)
+                logger.exception(e)
                 await event.reply('Unexpected error occurred, call admin')
             except Exception as e:
-                logger.error(e)
+                logger.exception(e)
                 await event.reply('Bad things happened, call admin now!')
 
         else:
@@ -389,8 +385,53 @@ async def main(config, inp: Dict):
     @client.on(CallbackQuery(pattern=b'Open Compartment'))
     async def open_compartment(event):
         if event.sender.id in inp:
-            await event.reply('Are you sure? This operation is irreversible!',
-                              buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+            msg = await event.get_message()
+            shipment_number = msg.raw_text.split('\n')[1].split(':')[1].strip()
+            try:
+                p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
+
+                match p.status:
+                    case ParcelStatus.DELIVERED:
+                        await event.answer('Parcel already delivered!', alert=True)
+                    case ParcelStatus.READY_TO_PICKUP:
+                        await event.reply('Are you sure? This operation is irreversible!',
+                                          buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+                    case _:
+                        await event.answer(f'Parcel not ready for pickup!\nStatus: {p.status.value}', alert=True)
+
+
+            except NotAuthenticatedError as e:
+                await event.reply(e.reason)
+            except ParcelTypeError as e:
+                await event.reply(e.reason)
+            except UnauthorizedError:
+                if await inp[event.sender.id].refresh_token():
+                    try:
+                        p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
+
+                        match p.status:
+                            case ParcelStatus.DELIVERED:
+                                await event.answer('Parcel already delivered!', alert=True)
+                            case ParcelStatus.READY_TO_PICKUP:
+                                await event.reply('Are you sure? This operation is irreversible!',
+                                                  buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+                            case _:
+                                await event.answer(f'Parcel not ready for pickup!\nStatus: {p.status.value}',
+                                                   alert=True)
+
+                    except Exception as e:
+                        logger.exception(e)
+                        await event.reply('Bad things happened, call admin now!')
+                else:
+                    await event.reply('You are not authorized, initialize first!')
+            except NotFoundError:
+                await event.reply('Parcel not found')
+            except UnidentifiedAPIError as e:
+                logger.exception(e)
+                await event.reply('Unexpected error occurred, call admin')
+            except Exception as e:
+                logger.exception(e)
+                await event.reply('Bad things happened, call admin now!')
 
         else:
             await event.reply('You are not initialized')
@@ -401,8 +442,9 @@ async def main(config, inp: Dict):
             msg = await event.get_message()
             msg = await msg.get_reply_message()
             shipment_number = msg.raw_text.split('\n')[1].split(':')[1].strip()
+            p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
             try:
-                await open_comp(event, inp, shipment_number)
+                await open_comp(event, inp, p)
 
             except NotAuthenticatedError as e:
                 await event.reply(e.reason)
@@ -411,21 +453,22 @@ async def main(config, inp: Dict):
             except UnauthorizedError:
                 if await inp[event.sender.id].refresh_token():
                     try:
-                        await open_comp(event, inp, shipment_number)
+                        await open_comp(event, inp, p)
 
                     except Exception as e:
-                        logger.error(e)
+                        logger.exception(e)
                         await event.reply('Bad things happened, call admin now!')
                 else:
                     await event.reply('You are not authorized, initialize first!')
             except NotFoundError:
                 await event.reply('Parcel not found')
             except UnidentifiedAPIError as e:
-                logger.error(e)
+                logger.exception(e)
                 await event.reply('Unexpected error occurred, call admin')
             except Exception as e:
-                logger.error(e)
+                logger.exception(e)
                 await event.reply('Bad things happened, call admin now!')
+
         else:
             await event.reply('You are not initialized')
 
