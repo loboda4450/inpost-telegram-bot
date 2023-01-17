@@ -17,18 +17,24 @@ async def send_pcgs(event, inp, status):
     p: List[Parcel] = await inp[event.sender.id].get_parcels(status=status, parse=True)
     if len(p) > 0:
         for package in p:
-            await event.reply(f'📤 **Sender:** `{package.sender.sender_name}`\n'
-                              f'📦 **Shipment number:** `{package.shipment_number}`\n'
-                              f'📮 **Status:** `{package.status.value}`\n'
-                              f'📥 **Pickup point:** `{package.pickup_point}`',
-                              buttons=[
-                                  [Button.inline('Open Code'),
-                                   Button.inline('QR Code')],
-                                  [Button.inline(
-                                      'Open Compartment')]] if package.status != ParcelStatus.DELIVERED else
-                              [Button.inline('Open Code'),
-                               Button.inline('QR Code')]
-                              )
+            match package.status:
+                case ParcelStatus.READY_TO_PICKUP:
+                    await event.reply(f'📤 **Sender:** `{package.sender.sender_name}`\n'
+                                      f'📦 **Shipment number:** `{package.shipment_number}`\n'
+                                      f'📮 **Status:** `{package.status.value}`\n'
+                                      f'📥 **Pickup point:** `{package.pickup_point}`',
+                                      buttons=[
+                                          [Button.inline('Open Code'),
+                                           Button.inline('QR Code')],
+                                          [Button.inline('Open Compartment')]
+                                      ]
+                                      )
+                case _:
+                    await event.reply(f'📤 **Sender:** `{package.sender.sender_name}`\n'
+                                      f'📦 **Shipment number:** `{package.shipment_number}`\n'
+                                      f'📮 **Status:** `{package.status.value}`\n'
+                                      f'📥 **Pickup point:** `{package.pickup_point}`')
+
     else:
         if isinstance(event, CallbackQuery.Event):
             await event.answer('No parcels with specified status!', alert=True)
@@ -281,6 +287,8 @@ async def main(config, inp: Dict):
                               ParcelStatus.TAKEN_BY_COURIER, ParcelStatus.TAKEN_BY_COURIER_FROM_POK]
                 elif event.text == '/delivered':
                     status = ParcelStatus.DELIVERED
+                elif event.text == '/all':
+                    status = None
                 else:
                     return
 
