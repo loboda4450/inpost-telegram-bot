@@ -6,8 +6,9 @@ import yaml
 
 from telethon import TelegramClient, Button
 from telethon.events import NewMessage, CallbackQuery
+import database
 
-from inpost.static import Parcel, ParcelStatus
+from inpost.static import ParcelStatus
 from inpost.static.exceptions import *
 from inpost.api import Inpost
 
@@ -16,10 +17,10 @@ async def send_pcgs(event, inp, status):
     p: List[Parcel] = await inp[event.sender.id].get_parcels(status=status, parse=True)
     if len(p) > 0:
         for package in p:
-            await event.reply(f'Sender: {package.sender.sender_name}\n'
-                              f'Shipment number: {package.shipment_number}\n'
-                              f'Status: {package.status.value}\n'
-                              f'Pickup point: {package.pickup_point}',
+            await event.reply(f'📤 **Sender:** `{package.sender.sender_name}`\n'
+                              f'📦 **Shipment number:** `{package.shipment_number}`\n'
+                              f'📮 **Status:** `{package.status.value}`\n'
+                              f'📥 **Pickup point:** `{package.pickup_point}`',
                               buttons=[
                                   [Button.inline('Open Code'),
                                    Button.inline('QR Code')],
@@ -62,7 +63,10 @@ async def open_comp(event, inp, shipment_number=None):
         case ParcelStatus.READY_TO_PICKUP:
             await inp[event.sender.id].collect(parcel_obj=p)
             await event.answer(
-                f'Compartment opened!\nLocation:\n   Side: {p.compartment_location.side}\n   Row: {p.compartment_location.row}\n   Column: {p.compartment_location.column}')
+                f'Compartment opened!\nLocation:\n   '
+                f'Side: {p.compartment_location.side}\n   '
+                f'Row: {p.compartment_location.row}\n   '
+                f'Column: {p.compartment_location.column}')
         case _:
             await event.answer(f'Parcel not ready for pickup!\nStatus: {p.status.value}', alert=True)
 
@@ -76,21 +80,34 @@ async def main(config, inp: Dict):
     if not config['bot_token']:
         raise Exception('No bot token provided')
 
+    data = database.get_dict()
+    for d in data:
+        inp[d] = Inpost()
+        await inp[d].set_phone_number(data[d]['phone_number'])
+        inp[d].sms_code = data[d]['sms_code']
+        inp[d].refr_token = data[d]['refr_token']
+        inp[d].auth_token = data[d]['auth_token']
+
     await client.start(bot_token=config['bot_token'])
     print("Started")
 
     @client.on(NewMessage(pattern='/start'))
     async def start(event):
-        await event.reply('Hello!\nThis is a bot helping you to manage your InPost parcels!\n\n'
+        await event.reply('Hello!\nThis is a bot helping you to manage your InPost parcels!\n'
+                          'If you want to contribute to Inpost development you can find us there: '
+                          '[Inpost](https://github.com/IFOSSA/inpost-python)\n\n'
                           'Log in using button that just shown up below the text box '
                           'or by typing `/init <phone_number>`!\n\n'
-                          'List of commands:\n'
-                          'start - display start message and allow user to login with Telegram\n'
-                          '/init - login using phone number /init <phone_number>\n'
-                          '/confirm - confirm login with sms code /confirm <sms_code>\n'
+                          '**List of commands:**\n'
+                          '/start - display start message and allow user to login with Telegram\n'
+                          '/init - login using phone number `/init <phone_number>`\n'
+                          '/confirm - confirm login with sms code `/confirm <sms_code>`\n'
+                          '/refresh - refresh authorization token\n'
                           '/pending - return pending parcels\n'
                           '/delivered - return delivered parcels\n'
-                          '/all - return all available parcels',
+                          '/parcel - return parcel `/parcel <shipment_number>`\n'
+                          '/all - return all available parcels\n'
+                          '/clear - if you accidentally invoked `/start` and annoying box sprang up',
                           buttons=[Button.request_phone('Log in via Telegram')])
 
     @client.on(NewMessage())
@@ -107,11 +124,14 @@ async def main(config, inp: Dict):
 
         if event.sender.id in inp:
             del inp[event.sender.id]
+            database.delete_user(event=event)
             await event.reply('You were initialized before, reinitializing')
+
         try:
             inp[event.sender.id] = Inpost()
             await inp[event.sender.id].set_phone_number(phone_number=phone_number)
             if await inp[event.sender.id].send_sms_code():
+                database.add_user(event=event, phone_number=phone_number)
                 await event.reply(f'Initialized with phone number: {inp[event.sender.id].phone_number}!'
                                   f'\nSending sms code!', buttons=Button.clear())
 
@@ -131,6 +151,11 @@ async def main(config, inp: Dict):
         if event.sender.id in inp and len(event.text.split()) == 2:
             try:
                 if await inp[event.sender.id].confirm_sms_code(event.text.split()[1].strip()):
+                    database.edit_user(event=event,
+                                       sms_code=event.text.split()[1].strip(),
+                                       refr_token=inp[event.sender.id].refr_token,
+                                       auth_token=inp[event.sender.id].auth_token)
+
                     await event.reply(f'Succesfully verifed!', buttons=[Button.inline('Pending Parcels'),
                                                                         Button.inline('Delivered Parcels')])
                 else:
@@ -151,11 +176,16 @@ async def main(config, inp: Dict):
         else:
             await event.reply('No sms code provided or not initialized')
 
+    @client.on(NewMessage(pattern='/clear'))
+    async def clear(event):
+        await event.reply('You are welcome :D', buttons=Button.clear())
+
     @client.on(NewMessage(pattern='/refresh'))
     async def refresh_token(event):
         if event.sender.id in inp:
             try:
                 if await inp[event.sender.id].refresh_token():
+                    database.edit_user(event=event, refr_token=inp[event.sender.id].refr_token)
                     await event.reply('Token refreshed!')
                 else:
                     await event.reply('Could not refresh token')
@@ -178,10 +208,10 @@ async def main(config, inp: Dict):
                     shipment_number=event.text.split(' ')[1].strip(),
                     parse=True)
 
-                await event.reply(f'Sender: {package.sender.sender_name}\n'
-                                  f'Shipment number: {package.shipment_number}\n'
-                                  f'Status: {package.status.value}\n'
-                                  f'Pickup point: {package.pickup_point}',
+                await event.reply(f'📤 **Sender:** `{package.sender.sender_name}`\n'
+                                  f'📦 **Shipment number:** `{package.shipment_number}`\n'
+                                  f'📮 **Status:** `{package.status.value}`\n'
+                                  f'📥 **Pickup point:** `{package.pickup_point}`',
                                   buttons=[
                                       [Button.inline('Open Code'),
                                        Button.inline('QR Code')],
@@ -200,10 +230,10 @@ async def main(config, inp: Dict):
                             shipment_number=event.text.split(' ')[1].strip(),
                             parse=True)
 
-                        await event.reply(f'Sender: {package.sender.sender_name}\n'
-                                          f'Shipment number: {package.shipment_number}\n'
-                                          f'Status: {package.status.value}\n'
-                                          f'Pickup point: {package.pickup_point}',
+                        await event.reply(f'📤 **Sender:** `{package.sender.sender_name}`\n'
+                                          f'📦 **Shipment number:** `{package.shipment_number}`\n'
+                                          f'📮 **Status:** `{package.status.value}`\n'
+                                          f'📥 **Pickup point:** `{package.pickup_point}`',
                                           buttons=[
                                               [Button.inline('Open Code'),
                                                Button.inline('QR Code')],

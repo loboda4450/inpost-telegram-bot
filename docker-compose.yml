@@ -5,5 +5,5 @@ services:
     build: .
     volumes:
       - ./config.yml:/app/config.yml:ro
-
+      - ./inpost.sqlite:/app/inpost.sqlite
     restart: unless-stopped
