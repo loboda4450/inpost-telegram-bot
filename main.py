@@ -24,16 +24,16 @@ async def send_pcgs(event, inp, status):
                                       f'📮 **Status:** `{package.status.value}`\n'
                                       f'📥 **Pickup point:** `{package.pickup_point}`',
                                       buttons=[
-                                          [Button.inline('Open Code'),
-                                           Button.inline('QR Code')],
-                                          [Button.inline('Open Compartment')]
+                                          [Button.inline('Open Code'), Button.inline('QR Code')],
+                                          [Button.inline('Details'), Button.inline('Open Compartment')]
                                       ]
                                       )
                 case _:
                     await event.reply(f'📤 **Sender:** `{package.sender.sender_name}`\n'
                                       f'📦 **Shipment number:** `{package.shipment_number}`\n'
                                       f'📮 **Status:** `{package.status.value}`\n'
-                                      f'📥 **Pickup point:** `{package.pickup_point}`')
+                                      f'📥 **Pickup point:** `{package.pickup_point}`',
+                                      buttons=[Button.inline('Details')])
 
     else:
         if isinstance(event, CallbackQuery.Event):
@@ -67,6 +67,22 @@ async def open_comp(event, inp, p: Parcel):
         f'Side: {p.compartment_location.side}\n   '
         f'Row: {p.compartment_location.row}\n   '
         f'Column: {p.compartment_location.column}')
+
+
+async def send_details(event, inp, shipment_number):
+    p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
+    events = "\n".join(f'{status.date.format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in p.event_log)
+    if p.status == ParcelStatus.READY_TO_PICKUP:
+        await event.reply(f'**Stored**: {p.stored_date.format("DD.MM.YYYY HH:mm")}\n'
+                          f'**Open code**: {p.open_code}\n'
+                          f'**Events**:\n{events}'
+                          )
+    elif p.status == ParcelStatus.DELIVERED:
+        await event.reply(f'**Picked up**: {p.pickup_date.format("DD.MM.YYYY HH:mm")}\n'
+                          f'**Events**:\n{events}'
+                          )
+    else:
+        await event.reply(f'**Events**:\n{events}')
 
 
 async def main(config, inp: Dict):
@@ -206,18 +222,23 @@ async def main(config, inp: Dict):
                     shipment_number=event.text.split(' ')[1].strip(),
                     parse=True)
 
-                await event.reply(f'📤 **Sender:** `{package.sender.sender_name}`\n'
-                                  f'📦 **Shipment number:** `{package.shipment_number}`\n'
-                                  f'📮 **Status:** `{package.status.value}`\n'
-                                  f'📥 **Pickup point:** `{package.pickup_point}`',
-                                  buttons=[
-                                      [Button.inline('Open Code'),
-                                       Button.inline('QR Code')],
-                                      [Button.inline(
-                                          'Open Compartment')]] if package.status != ParcelStatus.DELIVERED else
-                                  [Button.inline('Open Code'),
-                                   Button.inline('QR Code')]
-                                  )
+                match package.status:
+                    case ParcelStatus.READY_TO_PICKUP:
+                        await event.reply(f'📤 **Sender:** `{package.sender.sender_name}`\n'
+                                          f'📦 **Shipment number:** `{package.shipment_number}`\n'
+                                          f'📮 **Status:** `{package.status.value}`\n'
+                                          f'📥 **Pickup point:** `{package.pickup_point}`',
+                                          buttons=[
+                                              [Button.inline('Open Code'), Button.inline('QR Code')],
+                                              [Button.inline('Details'), Button.inline('Open Compartment')]
+                                          ]
+                                          )
+                    case _:
+                        await event.reply(f'📤 **Sender:** `{package.sender.sender_name}`\n'
+                                          f'📦 **Shipment number:** `{package.shipment_number}`\n'
+                                          f'📮 **Status:** `{package.status.value}`\n'
+                                          f'📥 **Pickup point:** `{package.pickup_point}`',
+                                          buttons=[Button.inline('Details')])
 
             except NotAuthenticatedError as e:
                 await event.reply(e.reason)
@@ -228,18 +249,24 @@ async def main(config, inp: Dict):
                             shipment_number=event.text.split(' ')[1].strip(),
                             parse=True)
 
-                        await event.reply(f'📤 **Sender:** `{package.sender.sender_name}`\n'
-                                          f'📦 **Shipment number:** `{package.shipment_number}`\n'
-                                          f'📮 **Status:** `{package.status.value}`\n'
-                                          f'📥 **Pickup point:** `{package.pickup_point}`',
-                                          buttons=[
-                                              [Button.inline('Open Code'),
-                                               Button.inline('QR Code')],
-                                              [Button.inline(
-                                                  'Open Compartment')]] if package.status != ParcelStatus.DELIVERED else
-                                          [Button.inline('Open Code'),
-                                           Button.inline('QR Code')]
-                                          )
+                        match package.status:
+                            case ParcelStatus.READY_TO_PICKUP:
+                                await event.reply(f'📤 **Sender:** `{package.sender.sender_name}`\n'
+                                                  f'📦 **Shipment number:** `{package.shipment_number}`\n'
+                                                  f'📮 **Status:** `{package.status.value}`\n'
+                                                  f'📥 **Pickup point:** `{package.pickup_point}`',
+                                                  buttons=[
+                                                      [Button.inline('Open Code'), Button.inline('QR Code')],
+                                                      [Button.inline('Details'), Button.inline('Open Compartment')]
+                                                  ]
+                                                  )
+                            case _:
+                                await event.reply(f'📤 **Sender:** `{package.sender.sender_name}`\n'
+                                                  f'📦 **Shipment number:** `{package.shipment_number}`\n'
+                                                  f'📮 **Status:** `{package.status.value}`\n'
+                                                  f'📥 **Pickup point:** `{package.pickup_point}`',
+                                                  buttons=[Button.inline('Details')])
+
                     except NotFoundError:
                         await event.reply('This parcel does not exist or does not belong to you!')
                     except Exception as e:
@@ -407,7 +434,6 @@ async def main(config, inp: Dict):
                     case _:
                         await event.answer(f'Parcel not ready for pickup!\nStatus: {p.status.value}', alert=True)
 
-
             except NotAuthenticatedError as e:
                 await event.reply(e.reason)
             except ParcelTypeError as e:
@@ -483,6 +509,40 @@ async def main(config, inp: Dict):
     @client.on(CallbackQuery(pattern=b'Hell no!'))
     async def no(event):
         await event.answer('Fine, compartment remains closed!')
+
+    @client.on(CallbackQuery(pattern=b'Details'))
+    async def details(event):
+        if event.sender.id in inp:
+            msg = await event.get_message()
+            shipment_number = msg.raw_text.split('\n')[1].split(':')[1].strip()
+            try:
+                await send_details(event, inp, shipment_number)
+            except NotAuthenticatedError as e:
+                await event.reply(e.reason)
+            except ParcelTypeError as e:
+                await event.reply(e.reason)
+            except UnauthorizedError:
+                if await inp[event.sender.id].refresh_token():
+                    try:
+                        await send_details(event, inp, shipment_number)
+
+                    except Exception as e:
+                        logger.exception(e)
+                        await event.reply('Bad things happened, call admin now!')
+                else:
+                    await event.reply('You are not authorized, initialize first!')
+
+            except NotFoundError:
+                await event.reply('Parcel not found!')
+            except UnidentifiedAPIError as e:
+                logger.exception(e)
+                await event.reply('Unexpected error occurred, call admin')
+            except Exception as e:
+                logger.exception(e)
+                await event.reply('Bad things happened, call admin now!')
+
+        else:
+            await event.reply('You are not initialized')
 
     async with client:
         print("Good morning!")
