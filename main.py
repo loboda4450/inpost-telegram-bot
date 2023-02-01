@@ -14,25 +14,47 @@ from inpost.api import Inpost
 
 
 async def send_pcgs(event, inp, status):
-    p: List[Parcel] = await inp[event.sender.id].get_parcels(status=status, parse=True)
-    if len(p) > 0:
-        for package in p:
+    packages: List[Parcel] = await inp[event.sender.id].get_parcels(status=status, parse=True)
+    exclude = []
+    if len(packages) > 0:
+        for package in packages:
+            if package.shipment_number in exclude:
+                continue
+
+            if package.is_multicompartment and not package.is_main_multicompartment:
+                exclude.append(package.shipment_number)
+                continue
+
+            elif package.is_main_multicompartment:
+                packages: List[Parcel] = await inp[event.sender.id].get_multi_compartment(
+                    multi_uuid=package.multi_compartment.uuid, parse=True)
+                package = next((parcel for parcel in packages if parcel.is_main_multicompartment), None)
+                other = '\n'.join(f'📤 **Sender:** `{p.sender.sender_name}`\n'
+                                  f'📦 **Shipment number:** `{p.shipment_number}\n`' for p in packages if
+                                  not p.is_main_multicompartment)
+
+                message = f'⚠️ **THIS IS MULTICOMPARTMENT CONTAINING {len(packages)} PARCELS!** ⚠\n️\n' \
+                          f'📤 **Sender:** `{package.sender.sender_name}`\n' \
+                          f'📦 **Shipment number:** `{package.shipment_number}`\n' \
+                          f'📮 **Status:** `{package.status.value}`\n' \
+                          f'📥 **Pickup point:** `{package.pickup_point}`\n\n' \
+                          f'Other parcels inside:\n{other}'
+            else:
+                message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
+                          f'📦 **Shipment number:** `{package.shipment_number}`\n' \
+                          f'📮 **Status:** `{package.status.value}`\n' \
+                          f'📥 **Pickup point:** `{package.pickup_point}`'
+
             match package.status:
                 case ParcelStatus.READY_TO_PICKUP:
-                    await event.reply(f'📤 **Sender:** `{package.sender.sender_name}`\n'
-                                      f'📦 **Shipment number:** `{package.shipment_number}`\n'
-                                      f'📮 **Status:** `{package.status.value}`\n'
-                                      f'📥 **Pickup point:** `{package.pickup_point}`',
+                    await event.reply(message,
                                       buttons=[
                                           [Button.inline('Open Code'), Button.inline('QR Code')],
                                           [Button.inline('Details'), Button.inline('Open Compartment')]
                                       ]
                                       )
                 case _:
-                    await event.reply(f'📤 **Sender:** `{package.sender.sender_name}`\n'
-                                      f'📦 **Shipment number:** `{package.shipment_number}`\n'
-                                      f'📮 **Status:** `{package.status.value}`\n'
-                                      f'📥 **Pickup point:** `{package.pickup_point}`',
+                    await event.reply(message,
                                       buttons=[Button.inline('Details')])
 
     else:
@@ -66,7 +88,7 @@ async def open_comp(event, inp, p: Parcel):
         f'Compartment opened!\nLocation:\n   '
         f'Side: {p.compartment_location.side}\n   '
         f'Row: {p.compartment_location.row}\n   '
-        f'Column: {p.compartment_location.column}')
+        f'Column: {p.compartment_location.column}', alert=True)
 
 
 async def send_details(event, inp, shipment_number):
@@ -222,22 +244,35 @@ async def main(config, inp: Dict):
                     shipment_number=event.text.split(' ')[1].strip(),
                     parse=True)
 
+                if package.is_multicompartment:
+                    packages: List[Parcel] = await inp[event.sender.id].get_multi_compartment(
+                        multi_uuid=package.multi_compartment.uuid, parse=True)
+                    package = next((parcel for parcel in packages if parcel.is_main_multicompartment), None)
+                    other = '\n'.join(f'📤 **Sender:** `{p.sender.sender_name}`\n'
+                                      f'📦 **Shipment number:** `{p.shipment_number}`' for p in packages if not p.is_main_multicompartment)
+
+                    message = f'⚠️ **THIS IS MULTICOMPARTMENT CONTAINING {len(packages)} PARCELS!** ⚠\n️\n' \
+                              f'📤 **Sender:** `{package.sender.sender_name}`\n' \
+                              f'📦 **Shipment number:** `{package.shipment_number}`\n' \
+                              f'📮 **Status:** `{package.status.value}`\n' \
+                              f'📥 **Pickup point:** `{package.pickup_point}`\n\n' \
+                              f'Other parcels inside:\n{other}'
+                else:
+                    message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
+                              f'📦 **Shipment number:** `{package.shipment_number}`\n' \
+                              f'📮 **Status:** `{package.status.value}`\n' \
+                              f'📥 **Pickup point:** `{package.pickup_point}`'
+
                 match package.status:
                     case ParcelStatus.READY_TO_PICKUP:
-                        await event.reply(f'📤 **Sender:** `{package.sender.sender_name}`\n'
-                                          f'📦 **Shipment number:** `{package.shipment_number}`\n'
-                                          f'📮 **Status:** `{package.status.value}`\n'
-                                          f'📥 **Pickup point:** `{package.pickup_point}`',
+                        await event.reply(message,
                                           buttons=[
                                               [Button.inline('Open Code'), Button.inline('QR Code')],
                                               [Button.inline('Details'), Button.inline('Open Compartment')]
                                           ]
                                           )
                     case _:
-                        await event.reply(f'📤 **Sender:** `{package.sender.sender_name}`\n'
-                                          f'📦 **Shipment number:** `{package.shipment_number}`\n'
-                                          f'📮 **Status:** `{package.status.value}`\n'
-                                          f'📥 **Pickup point:** `{package.pickup_point}`',
+                        await event.reply(message,
                                           buttons=[Button.inline('Details')])
 
             except NotAuthenticatedError as e:
@@ -249,22 +284,36 @@ async def main(config, inp: Dict):
                             shipment_number=event.text.split(' ')[1].strip(),
                             parse=True)
 
+                        if package.is_multicompartment:
+                            packages: List[Parcel] = await inp[event.sender.id].get_multi_compartment(
+                                multi_uuid=package.multi_compartment.uuid, parse=True)
+                            package = next((parcel for parcel in packages if parcel.is_main_multicompartment), None)
+                            other = '\n'.join(f'📤 **Sender:** `{p.sender.sender_name}`\n'
+                                              f'📦 **Shipment number:** `{p.shipment_number}`' for p in packages if
+                                              not p.is_main_multicompartment)
+
+                            message = f'⚠️ **THIS IS MULTICOMPARTMENT CONTAINING {len(packages)} PARCELS!** ⚠\n️\n' \
+                                      f'📤 **Sender:** `{package.sender.sender_name}`\n' \
+                                      f'📦 **Shipment number:** `{package.shipment_number}`\n' \
+                                      f'📮 **Status:** `{package.status.value}`\n' \
+                                      f'📥 **Pickup point:** `{package.pickup_point}`\n\n' \
+                                      f'Other parcels inside:\n{other}'
+                        else:
+                            message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
+                                      f'📦 **Shipment number:** `{package.shipment_number}`\n' \
+                                      f'📮 **Status:** `{package.status.value}`\n' \
+                                      f'📥 **Pickup point:** `{package.pickup_point}`'
+
                         match package.status:
                             case ParcelStatus.READY_TO_PICKUP:
-                                await event.reply(f'📤 **Sender:** `{package.sender.sender_name}`\n'
-                                                  f'📦 **Shipment number:** `{package.shipment_number}`\n'
-                                                  f'📮 **Status:** `{package.status.value}`\n'
-                                                  f'📥 **Pickup point:** `{package.pickup_point}`',
+                                await event.reply(message,
                                                   buttons=[
                                                       [Button.inline('Open Code'), Button.inline('QR Code')],
                                                       [Button.inline('Details'), Button.inline('Open Compartment')]
                                                   ]
                                                   )
                             case _:
-                                await event.reply(f'📤 **Sender:** `{package.sender.sender_name}`\n'
-                                                  f'📦 **Shipment number:** `{package.shipment_number}`\n'
-                                                  f'📮 **Status:** `{package.status.value}`\n'
-                                                  f'📥 **Pickup point:** `{package.pickup_point}`',
+                                await event.reply(message,
                                                   buttons=[Button.inline('Details')])
 
                     except NotFoundError:
@@ -353,7 +402,7 @@ async def main(config, inp: Dict):
     async def send_qr_code(event):
         if event.sender.id in inp:
             msg = await event.get_message()
-            shipment_number = msg.raw_text.split('\n')[1].split(':')[1].strip()
+            shipment_number = msg.raw_text.split('\n')[3].split(':')[1].strip()
             try:
                 await send_qrc(event, inp, shipment_number)
 
@@ -387,7 +436,7 @@ async def main(config, inp: Dict):
     async def show_open_code(event):
         if event.sender.id in inp:
             msg = await event.get_message()
-            shipment_number = msg.raw_text.split('\n')[1].split(':')[1].strip()
+            shipment_number = msg.raw_text.split('\n')[3].split(':')[1].strip()
             try:
                 await show_oc(event, inp, shipment_number)
             except NotAuthenticatedError as e:
@@ -421,7 +470,7 @@ async def main(config, inp: Dict):
     async def open_compartment(event):
         if event.sender.id in inp:
             msg = await event.get_message()
-            shipment_number = msg.raw_text.split('\n')[1].split(':')[1].strip()
+            shipment_number = msg.raw_text.split('\n')[3].split(':')[1].strip()
             try:
                 p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
 
@@ -475,7 +524,7 @@ async def main(config, inp: Dict):
         if event.sender.id in inp:
             msg = await event.get_message()
             msg = await msg.get_reply_message()
-            shipment_number = msg.raw_text.split('\n')[1].split(':')[1].strip()
+            shipment_number = msg.raw_text.split('\n')[3].split(':')[1].strip()
             p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
             try:
                 await open_comp(event, inp, p)
@@ -514,7 +563,7 @@ async def main(config, inp: Dict):
     async def details(event):
         if event.sender.id in inp:
             msg = await event.get_message()
-            shipment_number = msg.raw_text.split('\n')[1].split(':')[1].strip()
+            shipment_number = msg.raw_text.split('\n')[3].split(':')[1].strip()
             try:
                 await send_details(event, inp, shipment_number)
             except NotAuthenticatedError as e:
