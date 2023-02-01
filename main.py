@@ -100,18 +100,20 @@ async def send_details(event, inp, shipment_number):
 
         for p in parcels:
 
-            events = "\n".join(f'{status.date.format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}'
-                               for status in parcel.event_log)
-            if parcel.status == ParcelStatus.READY_TO_PICKUP:
-                message = message + f'**Stored**: {parcel.stored_date.format("DD.MM.YYYY HH:mm")}\n' \
-                                    f'**Open code**: {parcel.open_code}\n' \
-                                    f'**Events**:\n{events}\n'
+            events = "\n".join(f'{status.date.format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in p.event_log)
+            if p.status == ParcelStatus.READY_TO_PICKUP:
+                message = message + f'**Shipment number**: {p.shipment_number}\n' \
+                                    f'**Stored**: {p.stored_date.format("DD.MM.YYYY HH:mm")}\n' \
+                                    f'**Open code**: {p.open_code}\n' \
+                                    f'**Events**:\n{events}\n\n'
 
             elif p.status == ParcelStatus.DELIVERED:
-                message = message + f'**Stored**: {parcel.stored_date.format("DD.MM.YYYY HH:mm")}\n' \
-                                    f'**Events**:\n{events}\n'
+                message = message + f'**Stored**: {p.stored_date.format("DD.MM.YYYY HH:mm")}\n' \
+                                    f'**Events**:\n{events}\n\n'
             else:
-                message = message + f'**Events**:\n{events}\n'
+                message = message + f'**Events**:\n{events}\n\n'
+
+        await event.reply(message)
     else:
         events = "\n".join(
             f'{status.date.format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in parcel.event_log)
@@ -120,7 +122,7 @@ async def send_details(event, inp, shipment_number):
                               f'**Open code**: {parcel.open_code}\n'
                               f'**Events**:\n{events}'
                               )
-        elif p.status == ParcelStatus.DELIVERED:
+        elif parcel.status == ParcelStatus.DELIVERED:
             await event.reply(f'**Picked up**: {parcel.pickup_date.format("DD.MM.YYYY HH:mm")}\n'
                               f'**Events**:\n{events}'
                               )
