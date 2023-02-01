@@ -92,19 +92,40 @@ async def open_comp(event, inp, p: Parcel):
 
 
 async def send_details(event, inp, shipment_number):
-    p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
-    events = "\n".join(f'{status.date.format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in p.event_log)
-    if p.status == ParcelStatus.READY_TO_PICKUP:
-        await event.reply(f'**Stored**: {p.stored_date.format("DD.MM.YYYY HH:mm")}\n'
-                          f'**Open code**: {p.open_code}\n'
-                          f'**Events**:\n{events}'
-                          )
-    elif p.status == ParcelStatus.DELIVERED:
-        await event.reply(f'**Picked up**: {p.pickup_date.format("DD.MM.YYYY HH:mm")}\n'
-                          f'**Events**:\n{events}'
-                          )
+    parcel: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
+
+    if parcel.is_multicompartment:
+        parcels = await inp[event.sender.id].get_multi_compartment(multi_uuid=parcel.multi_compartment.uuid, parse=True)
+        message = ''
+
+        for p in parcels:
+
+            events = "\n".join(f'{status.date.format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}'
+                               for status in parcel.event_log)
+            if parcel.status == ParcelStatus.READY_TO_PICKUP:
+                message = message + f'**Stored**: {parcel.stored_date.format("DD.MM.YYYY HH:mm")}\n' \
+                                    f'**Open code**: {parcel.open_code}\n' \
+                                    f'**Events**:\n{events}\n'
+
+            elif p.status == ParcelStatus.DELIVERED:
+                message = message + f'**Stored**: {parcel.stored_date.format("DD.MM.YYYY HH:mm")}\n' \
+                                    f'**Events**:\n{events}\n'
+            else:
+                message = message + f'**Events**:\n{events}\n'
     else:
-        await event.reply(f'**Events**:\n{events}')
+        events = "\n".join(
+            f'{status.date.format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in parcel.event_log)
+        if parcel.status == ParcelStatus.READY_TO_PICKUP:
+            await event.reply(f'**Stored**: {parcel.stored_date.format("DD.MM.YYYY HH:mm")}\n'
+                              f'**Open code**: {parcel.open_code}\n'
+                              f'**Events**:\n{events}'
+                              )
+        elif p.status == ParcelStatus.DELIVERED:
+            await event.reply(f'**Picked up**: {parcel.pickup_date.format("DD.MM.YYYY HH:mm")}\n'
+                              f'**Events**:\n{events}'
+                              )
+        else:
+            await event.reply(f'**Events**:\n{events}')
 
 
 async def main(config, inp: Dict):
@@ -241,7 +262,7 @@ async def main(config, inp: Dict):
         if event.sender.id in inp and len(event.text.split(' ')) == 2:
             try:
                 package: Parcel = await inp[event.sender.id].get_parcel(
-                    shipment_number=event.text.split(' ')[1].strip(),
+                    shipment_number=(next((data for data in event.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip(),
                     parse=True)
 
                 if package.is_multicompartment:
@@ -281,7 +302,7 @@ async def main(config, inp: Dict):
                 if await inp[event.sender.id].refresh_token():
                     try:
                         package: Parcel = await inp[event.sender.id].get_parcel(
-                            shipment_number=event.text.split(' ')[1].strip(),
+                            shipment_number=(next((data for data in event.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip(),
                             parse=True)
 
                         if package.is_multicompartment:
@@ -402,7 +423,7 @@ async def main(config, inp: Dict):
     async def send_qr_code(event):
         if event.sender.id in inp:
             msg = await event.get_message()
-            shipment_number = msg.raw_text.split('\n')[3].split(':')[1].strip()
+            shipment_number = (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
             try:
                 await send_qrc(event, inp, shipment_number)
 
@@ -436,7 +457,7 @@ async def main(config, inp: Dict):
     async def show_open_code(event):
         if event.sender.id in inp:
             msg = await event.get_message()
-            shipment_number = msg.raw_text.split('\n')[3].split(':')[1].strip()
+            shipment_number = (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
             try:
                 await show_oc(event, inp, shipment_number)
             except NotAuthenticatedError as e:
@@ -470,7 +491,7 @@ async def main(config, inp: Dict):
     async def open_compartment(event):
         if event.sender.id in inp:
             msg = await event.get_message()
-            shipment_number = msg.raw_text.split('\n')[3].split(':')[1].strip()
+            shipment_number = (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
             try:
                 p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
 
@@ -524,7 +545,7 @@ async def main(config, inp: Dict):
         if event.sender.id in inp:
             msg = await event.get_message()
             msg = await msg.get_reply_message()
-            shipment_number = msg.raw_text.split('\n')[3].split(':')[1].strip()
+            shipment_number = (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
             p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
             try:
                 await open_comp(event, inp, p)
@@ -563,7 +584,7 @@ async def main(config, inp: Dict):
     async def details(event):
         if event.sender.id in inp:
             msg = await event.get_message()
-            shipment_number = msg.raw_text.split('\n')[3].split(':')[1].strip()
+            shipment_number = (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
             try:
                 await send_details(event, inp, shipment_number)
             except NotAuthenticatedError as e:
