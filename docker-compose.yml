@@ -6,4 +6,6 @@ services:
     volumes:
       - ./config.yml:/app/config.yml:ro
       - ./inpost.sqlite:/app/inpost.sqlite
+    environment:
+      - TZ=Europe/Warsaw
     restart: unless-stopped
