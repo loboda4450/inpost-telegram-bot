@@ -60,13 +60,11 @@ async def send_pcgs(event, inp, status):
                     await event.reply(message,
                                       buttons=[
                                           [Button.inline('Open Code'), Button.inline('QR Code')],
-                                          [Button.inline('Details'), Button.inline('Open Compartment')],
-                                          [Button.inline('Share')]
-                                      ]
+                                          [Button.inline('Details'), Button.inline('Open Compartment')], ]
                                       )
                 case _:
                     await event.reply(message,
-                                      buttons=[Button.inline('Details'), Button.inline('Share')])
+                                      buttons=[Button.inline('Details'), ])
 
     else:
         if isinstance(event, CallbackQuery.Event):
@@ -177,6 +175,8 @@ async def main(config, inp: Dict):
                           '/pending - return pending parcels\n'
                           '/delivered - return delivered parcels\n'
                           '/parcel - return parcel `/parcel <shipment_number>`\n'
+                          '/friends - list all known inpost friends \n'
+                          '/share <reply to parcel message> - share parcel to listed friend\n'
                           '/all - return all available parcels\n'
                           '/clear - if you accidentally invoked `/start` and annoying box sprang up',
                           buttons=[Button.request_phone('Log in via Telegram')])
@@ -442,57 +442,101 @@ async def main(config, inp: Dict):
 
     @client.on(NewMessage(pattern='/friends'))
     async def send_friends(event):
-        if event.sender.id in inp:
-            try:
-                friends = await inp[event.sender.id].get_friends()
-                for f in friends['friends']:
-                    await event.reply(f'**Name**: {f["name"]}\n'
-                                      f'**Phone number**: {f["phoneNumber"]}',
-                                      buttons=[Button.inline('Remove')])
-
-                for i in friends['invitations']:
-                    await event.reply(f'**Name**: {i["friend"]["name"]}\n'
-                                      f'**Phone number**: {i["friend"]["phoneNumber"]}\n'
-                                      f'**Invitation code**: `{i["invitationCode"]}`\n'
-                                      f'**Expiry date**: {i["expiryDate"]}',
-                                      buttons=[Button.inline('Remove')])
-
-            except NotAuthenticatedError as e:
-                await event.reply(e.reason)
-            except ParcelTypeError as e:
-                await event.reply(e.reason)
-            except UnauthorizedError:
-                if await inp[event.sender.id].refresh_token():
-                    try:
-                        friends = await inp[event.sender.id].get_friends()
-                        for f in friends['friends']:
-                            await event.reply(f'**Name**: {f["name"]}\n'
-                                              f'**Phone number**: {f["phoneNumber"]}',
-                                              buttons=[Button.inline('Remove')])
-
-                        for i in friends['invitations']:
-                            await event.reply(f'**Name**: {i["friend"]["name"]}\n'
-                                              f'**Phone number**: {i["friend"]["phoneNumber"]}\n'
-                                              f'**Invitation code**: `{i["invitationCode"]}`\n'
-                                              f'**Expiry date**: {i["expiryDate"]}',
-                                              buttons=[Button.inline('Remove')])
-
-                    except Exception as e:
-                        logger.exception(e)
-                        await event.reply('Bad things happened, call admin now!')
-                else:
-                    await event.reply('You are not authorized, initialize first!')
-
-            except NotFoundError:
-                await event.reply('Parcel not found!')
-            except UnidentifiedAPIError as e:
-                logger.exception(e)
-                await event.reply('Unexpected error occurred, call admin')
-            except Exception as e:
-                logger.exception(e)
-                await event.reply('Bad things happened, call admin now!')
-        else:
+        if event.sender.id not in inp:
             await event.reply('You are not initialized')
+
+        try:
+            friends = await inp[event.sender.id].get_friends()
+            for f in friends['friends']:
+                await event.reply(f'**Name**: {f["name"]}\n'
+                                  f'**Phone number**: {f["phoneNumber"]}',
+                                  buttons=[Button.inline('Remove')])
+
+            for i in friends['invitations']:
+                await event.reply(f'**Name**: {i["friend"]["name"]}\n'
+                                  f'**Phone number**: {i["friend"]["phoneNumber"]}\n'
+                                  f'**Invitation code**: `{i["invitationCode"]}`\n'
+                                  f'**Expiry date**: {i["expiryDate"]}',
+                                  buttons=[Button.inline('Remove')])
+
+        except NotAuthenticatedError as e:
+            await event.reply(e.reason)
+        except ParcelTypeError as e:
+            await event.reply(e.reason)
+        except UnauthorizedError:
+            if await inp[event.sender.id].refresh_token():
+                try:
+                    friends = await inp[event.sender.id].get_friends()
+                    for f in friends['friends']:
+                        await event.reply(f'**Name**: {f["name"]}\n'
+                                          f'**Phone number**: {f["phoneNumber"]}',
+                                          buttons=[Button.inline('Remove')])
+
+                    for i in friends['invitations']:
+                        await event.reply(f'**Name**: {i["friend"]["name"]}\n'
+                                          f'**Phone number**: {i["friend"]["phoneNumber"]}\n'
+                                          f'**Invitation code**: `{i["invitationCode"]}`\n'
+                                          f'**Expiry date**: {i["expiryDate"]}',
+                                          buttons=[Button.inline('Remove')])
+
+                except Exception as e:
+                    logger.exception(e)
+                    await event.reply('Bad things happened, call admin now!')
+            else:
+                await event.reply('You are not authorized, initialize first!')
+
+        except NotFoundError:
+            await event.reply('Parcel not found!')
+        except UnidentifiedAPIError as e:
+            logger.exception(e)
+            await event.reply('Unexpected error occurred, call admin')
+        except Exception as e:
+            logger.exception(e)
+            await event.reply('Bad things happened, call admin now!')
+
+    @client.on(NewMessage(pattern='/share'))
+    async def share_to_friend(event):
+        if event.sender.id not in inp:
+            await event.reply('You are not initialized')
+
+        if not event.message.is_reply:
+            await event.reply('Wrong parcel to share!')
+
+        try:
+            msg = await event.get_reply_message()
+            shipment_number = \
+                (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[
+                    1].strip()
+
+            friends = await inp[event.sender.id].get_parcel_friends(shipment_number=shipment_number, parse=True)
+
+            for f in friends['friends']:
+                await event.reply(f'**Name**: {f.name}\n'
+                                  f'**Phone number**: {f.phone_number}',
+                                  buttons=[Button.inline('Share')])
+
+        except NotAuthenticatedError as e:
+            await event.reply(e.reason)
+        except ParcelTypeError as e:
+            await event.reply(e.reason)
+        except UnauthorizedError:
+            if await inp[event.sender.id].refresh_token():
+                try:
+                    msg = await event.get_reply_message()
+                    shipment_number = \
+                        (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[
+                            1].strip()
+                    friends = await inp[event.sender.id].get_parcel_friends(shipment_number=shipment_number,
+                                                                            parse=True)
+
+                    for f in friends['friends']:
+                        await event.reply(f'**Name**: {f.name}\n'
+                                          f'**Phone number**: {f.phone_number}',
+                                          buttons=[Button.inline('Share')])
+
+                except Exception as e:
+                    logger.exception(e)
+                    await event.reply('Bad things happened, call admin now!')
 
     @client.on(CallbackQuery(pattern=b'QR Code'))
     async def send_qr_code(event):
@@ -693,6 +737,58 @@ async def main(config, inp: Dict):
 
         else:
             await event.reply('You are not initialized')
+
+    @client.on(CallbackQuery(pattern=b'Share'))
+    async def share_parcel(event):
+        if event.sender.id not in inp:
+            await event.reply('You are not initialized')
+
+        try:
+            friend = await event.get_message()
+            msg = await friend.get_reply_message()
+            msg = await msg.get_reply_message()
+            friend = friend.raw_text.split('\n')
+            friend = [friend[0].split(':')[1].strip(), friend[1].split(':')[1].strip()]
+
+            shipment_number = \
+                (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[
+                    1].strip()
+
+            friends = await inp[event.sender.id].get_parcel_friends(shipment_number=shipment_number, parse=True)
+            uuid = (next((f for f in friends['friends'] if (f.name == friend[0] and f.phone_number == friend[1])))).uuid
+            if await inp[event.sender.id].share_parcel(uuid=uuid, shipment_number=shipment_number):
+                await event.reply('Parcel shared!')
+            else:
+                await event.reply('Not shared!')
+
+        except NotAuthenticatedError as e:
+            await event.reply(e.reason)
+        except ParcelTypeError as e:
+            await event.reply(e.reason)
+        except UnauthorizedError:
+            if await inp[event.sender.id].refresh_token():
+                try:
+                    friend = await event.get_message()
+                    msg = await friend.get_reply_message()
+                    msg = await msg.get_reply_message()
+                    friend = friend.raw_text.split('\n')
+                    friend = [friend[0].split(':')[1].strip(), friend[1].split(':')[1].strip()]
+
+                    shipment_number = \
+                        (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[
+                            1].strip()
+
+                    friends = await inp[event.sender.id].get_parcel_friends(shipment_number=shipment_number, parse=True)
+                    uuid = (next(
+                        (f for f in friends['friends'] if (f.name == friend[0] and f.phone_number == friend[1])))).uuid
+                    if await inp[event.sender.id].share_parcel(uuid=uuid, shipment_number=shipment_number):
+                        await event.reply('Parcel shared!')
+                    else:
+                        await event.reply('Not shared!')
+
+                except Exception as e:
+                    logger.exception(e)
+                    await event.reply('Bad things happened, call admin now!')
 
     async with client:
         print("Good morning!")
