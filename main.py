@@ -44,20 +44,21 @@ async def send_pcgs(event, inp, status):
                           f'📤 **Sender:** `{package.sender.sender_name}`\n' \
                           f'📦 **Shipment number:** `{package.shipment_number}`\n' \
                           f'📮 **Status:** `{package.status.value}`\n' \
-                          f'📥 **Pickup point:** `{package.pickup_point}`\n\n' \
+                          f'📥 **Pick up point:** `{package.pickup_point}`\n\n' \
                           f'Other parcels inside:\n{other}'
             else:
                 message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
                           f'📦 **Shipment number:** `{package.shipment_number}`\n' \
                           f'📮 **Status:** `{package.status.value}`\n' \
-                          f'📥 **Pickup point:** `{package.pickup_point}`'
+                          f'📥 **Pick up point:** `{package.pickup_point}`'
 
             if package.status in (ParcelStatus.STACK_IN_BOX_MACHINE, ParcelStatus.STACK_IN_CUSTOMER_SERVICE_POINT):
-                message = f'⚠️ **PARCEL IS IN SUBSTITUTIONARY PICKUP POINT!** ⚠\n️\n' + message
+                message = f'⚠️ **PARCEL IS IN SUBSTITUTIONARY PICK UP POINT!** ⚠\n️\n' + message
 
             match package.status:
                 case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE | ParcelStatus.STACK_IN_CUSTOMER_SERVICE_POINT:
-                    await event.reply(message,
+                    await event.reply(message + f'\n🫳 **Pick up until:** '
+                                                f'`{package.expiry_date.to("local").format("DD.MM.YYYY HH:mm")}`',
                                       buttons=[
                                           [Button.inline('Open Code'), Button.inline('QR Code')],
                                           [Button.inline('Details'), Button.inline('Open Compartment')], ]
@@ -80,7 +81,7 @@ async def send_qrc(event, inp, shipment_number):
     if p.status == ParcelStatus.READY_TO_PICKUP:
         await event.reply(file=p.generate_qr_image)
     else:
-        await event.answer(f'Parcel not ready for pickup!\nStatus: {p.status.value}', alert=True)
+        await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
 
 
 async def show_oc(event, inp, shipment_number):
@@ -88,7 +89,7 @@ async def show_oc(event, inp, shipment_number):
     if p.status == ParcelStatus.READY_TO_PICKUP:
         await event.answer(f'This parcel open code is: {p.open_code}', alert=True)
     else:
-        await event.answer(f'Parcel not ready for pickup!\nStatus: {p.status.value}', alert=True)
+        await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
 
 
 async def open_comp(event, inp, p: Parcel):
@@ -108,17 +109,17 @@ async def send_details(event, inp, shipment_number):
         message = ''
 
         for p in parcels:
-
+            message = message + f'**Sender:** {p.sender}\n'
             events = "\n".join(
-                f'{status.date.format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in p.event_log)
+                f'{status.date.to("local").format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in p.event_log)
             if p.status == ParcelStatus.READY_TO_PICKUP:
                 message = message + f'**Shipment number**: {p.shipment_number}\n' \
-                                    f'**Stored**: {p.stored_date.format("DD.MM.YYYY HH:mm")}\n' \
+                                    f'**Stored**: {p.stored_date.to("local").format("DD.MM.YYYY HH:mm")}\n' \
                                     f'**Open code**: {p.open_code}\n' \
                                     f'**Events**:\n{events}\n\n'
 
             elif p.status == ParcelStatus.DELIVERED:
-                message = message + f'**Stored**: {p.stored_date.format("DD.MM.YYYY HH:mm")}\n' \
+                message = message + f'**Stored**: {p.stored_date.to("local").format("DD.MM.YYYY HH:mm")}\n' \
                                     f'**Events**:\n{events}\n\n'
             else:
                 message = message + f'**Events**:\n{events}\n\n'
@@ -126,14 +127,14 @@ async def send_details(event, inp, shipment_number):
         await event.reply(message)
     else:
         events = "\n".join(
-            f'{status.date.format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in parcel.event_log)
+            f'{status.date.to("local").format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in parcel.event_log)
         if parcel.status == ParcelStatus.READY_TO_PICKUP:
-            await event.reply(f'**Stored**: {parcel.stored_date.format("DD.MM.YYYY HH:mm")}\n'
+            await event.reply(f'**Stored**: {parcel.stored_date.to("local").format("DD.MM.YYYY HH:mm")}\n'
                               f'**Open code**: {parcel.open_code}\n'
                               f'**Events**:\n{events}'
                               )
         elif parcel.status == ParcelStatus.DELIVERED:
-            await event.reply(f'**Picked up**: {parcel.pickup_date.format("DD.MM.YYYY HH:mm")}\n'
+            await event.reply(f'**Picked up**: {parcel.pickup_date.to("local").format("DD.MM.YYYY HH:mm")}\n'
                               f'**Events**:\n{events}'
                               )
         else:
@@ -293,13 +294,13 @@ async def main(config, inp: Dict):
                               f'📤 **Sender:** `{package.sender.sender_name}`\n' \
                               f'📦 **Shipment number:** `{package.shipment_number}`\n' \
                               f'📮 **Status:** `{package.status.value}`\n' \
-                              f'📥 **Pickup point:** `{package.pickup_point}`\n\n' \
+                              f'📥 **Pick up point:** `{package.pickup_point}`\n\n' \
                               f'Other parcels inside:\n{other}'
                 else:
                     message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
                               f'📦 **Shipment number:** `{package.shipment_number}`\n' \
                               f'📮 **Status:** `{package.status.value}`\n' \
-                              f'📥 **Pickup point:** `{package.pickup_point}`'
+                              f'📥 **Pick up point:** `{package.pickup_point}`'
 
                 match package.status:
                     case ParcelStatus.READY_TO_PICKUP:
@@ -336,13 +337,13 @@ async def main(config, inp: Dict):
                                       f'📤 **Sender:** `{package.sender.sender_name}`\n' \
                                       f'📦 **Shipment number:** `{package.shipment_number}`\n' \
                                       f'📮 **Status:** `{package.status.value}`\n' \
-                                      f'📥 **Pickup point:** `{package.pickup_point}`\n\n' \
+                                      f'📥 **Pick up point:** `{package.pickup_point}`\n\n' \
                                       f'Other parcels inside:\n{other}'
                         else:
                             message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
                                       f'📦 **Shipment number:** `{package.shipment_number}`\n' \
                                       f'📮 **Status:** `{package.status.value}`\n' \
-                                      f'📥 **Pickup point:** `{package.pickup_point}`'
+                                      f'📥 **Pick up point:** `{package.pickup_point}`'
 
                         match package.status:
                             case ParcelStatus.READY_TO_PICKUP:
@@ -624,7 +625,7 @@ async def main(config, inp: Dict):
                         await event.reply('Are you sure? This operation is irreversible!',
                                           buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
                     case _:
-                        await event.answer(f'Parcel not ready for pickup!\nStatus: {p.status.value}', alert=True)
+                        await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
 
             except NotAuthenticatedError as e:
                 await event.reply(e.reason)
@@ -642,7 +643,7 @@ async def main(config, inp: Dict):
                                 await event.reply('Are you sure? This operation is irreversible!',
                                                   buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
                             case _:
-                                await event.answer(f'Parcel not ready for pickup!\nStatus: {p.status.value}',
+                                await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}',
                                                    alert=True)
 
                     except Exception as e:
