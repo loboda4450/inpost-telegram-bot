@@ -8,7 +8,7 @@ from telethon import TelegramClient, Button
 from telethon.events import NewMessage, CallbackQuery
 import database
 
-from inpost.static import ParcelStatus
+from inpost.static import ParcelStatus, ParcelShipmentType
 from inpost.static.exceptions import *
 from inpost.api import Inpost
 
@@ -46,6 +46,11 @@ async def send_pcgs(event, inp, status):
                           f'📮 **Status:** `{package.status.value}`\n' \
                           f'📥 **Pick up point:** `{package.pickup_point}`\n\n' \
                           f'Other parcels inside:\n{other}'
+
+            elif package.shipment_type == ParcelShipmentType.courier:
+                message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
+                          f'📦 **Shipment number:** `{package.shipment_number}`\n' \
+                          f'📮 **Status:** `{package.status.value}`\n'
             else:
                 message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
                           f'📦 **Shipment number:** `{package.shipment_number}`\n' \
@@ -111,7 +116,8 @@ async def send_details(event, inp, shipment_number):
         for p in parcels:
             message = message + f'**Sender:** {p.sender}\n'
             events = "\n".join(
-                f'{status.date.to("local").format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in p.event_log)
+                f'{status.date.to("local").format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in
+                p.event_log)
             if p.status == ParcelStatus.READY_TO_PICKUP:
                 message = message + f'**Shipment number**: {p.shipment_number}\n' \
                                     f'**Stored**: {p.stored_date.to("local").format("DD.MM.YYYY HH:mm")}\n' \
@@ -127,7 +133,8 @@ async def send_details(event, inp, shipment_number):
         await event.reply(message)
     else:
         events = "\n".join(
-            f'{status.date.to("local").format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in parcel.event_log)
+            f'{status.date.to("local").format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in
+            parcel.event_log)
         if parcel.status == ParcelStatus.READY_TO_PICKUP:
             await event.reply(f'**Stored**: {parcel.stored_date.to("local").format("DD.MM.YYYY HH:mm")}\n'
                               f'**Open code**: {parcel.open_code}\n'
