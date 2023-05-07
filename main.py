@@ -44,7 +44,8 @@ async def send_pcgs(event, inp, status):
                           f'📤 **Sender:** `{package.sender.sender_name}`\n' \
                           f'📦 **Shipment number:** `{package.shipment_number}`\n' \
                           f'📮 **Status:** `{package.status.value}`\n' \
-                          f'📥 **Pick up point:** `{package.pickup_point}`\n\n' \
+                          f'📥 **Pick up point:** `{package.pickup_point}, {package.pickup_point.city} ' \
+                          f'{package.pickup_point.street} {package.pickup_point.building_number}`\n\n' \
                           f'Other parcels inside:\n{other}'
 
             elif package.shipment_type == ParcelShipmentType.courier:
@@ -55,7 +56,8 @@ async def send_pcgs(event, inp, status):
                 message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
                           f'📦 **Shipment number:** `{package.shipment_number}`\n' \
                           f'📮 **Status:** `{package.status.value}`\n' \
-                          f'📥 **Pick up point:** `{package.pickup_point}`'
+                          f'📥 **Pick up point:** `{package.pickup_point}, {package.pickup_point.city} ' \
+                          f'{package.pickup_point.street} {package.pickup_point.building_number}`'
 
             if package.status in (ParcelStatus.STACK_IN_BOX_MACHINE, ParcelStatus.STACK_IN_CUSTOMER_SERVICE_POINT):
                 message = f'⚠️ **PARCEL IS IN SUBSTITUTIONARY PICK UP POINT!** ⚠\n️\n' + message
@@ -301,13 +303,15 @@ async def main(config, inp: Dict):
                               f'📤 **Sender:** `{package.sender.sender_name}`\n' \
                               f'📦 **Shipment number:** `{package.shipment_number}`\n' \
                               f'📮 **Status:** `{package.status.value}`\n' \
-                              f'📥 **Pick up point:** `{package.pickup_point}`\n\n' \
+                              f'📥 **Pick up point:** `{package.pickup_point}, {package.pickup_point.city} ' \
+                              f'{package.pickup_point.street} {package.pickup_point.building_number}`\n\n' \
                               f'Other parcels inside:\n{other}'
                 else:
                     message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
                               f'📦 **Shipment number:** `{package.shipment_number}`\n' \
                               f'📮 **Status:** `{package.status.value}`\n' \
-                              f'📥 **Pick up point:** `{package.pickup_point}`'
+                              f'📥 **Pick up point:** `{package.pickup_point}, {package.pickup_point.city} ' \
+                              f'{package.pickup_point.street} {package.pickup_point.building_number}`'
 
                 match package.status:
                     case ParcelStatus.READY_TO_PICKUP:
@@ -344,13 +348,15 @@ async def main(config, inp: Dict):
                                       f'📤 **Sender:** `{package.sender.sender_name}`\n' \
                                       f'📦 **Shipment number:** `{package.shipment_number}`\n' \
                                       f'📮 **Status:** `{package.status.value}`\n' \
-                                      f'📥 **Pick up point:** `{package.pickup_point}`\n\n' \
+                                      f'📥 **Pick up point:** `{package.pickup_point}, {package.pickup_point.city} ' \
+                                      f'{package.pickup_point.street} {package.pickup_point.building_number}`\n\n' \
                                       f'Other parcels inside:\n{other}'
                         else:
                             message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
                                       f'📦 **Shipment number:** `{package.shipment_number}`\n' \
                                       f'📮 **Status:** `{package.status.value}`\n' \
-                                      f'📥 **Pick up point:** `{package.pickup_point}`'
+                                      f'📥 **Pick up point:** `{package.pickup_point}, {package.pickup_point.city} ' \
+                                      f'{package.pickup_point.street} {package.pickup_point.building_number}`'
 
                         match package.status:
                             case ParcelStatus.READY_TO_PICKUP:
@@ -639,8 +645,6 @@ async def main(config, inp: Dict):
             (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
         try:
             p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
-            # (51.96333351198862, 19.69786269448417)
-            # (51.96399, 19.69657)
 
             match p.status:
                 case ParcelStatus.DELIVERED:
@@ -655,7 +659,7 @@ async def main(config, inp: Dict):
                     else:
                         await event.reply(
                             f'Your location is outside the range that is allowed to open this parcel machine. '
-                            f'Confirm that you are standing near by, there is description:'
+                            f'Confirm that you are standing nearby, there is description:'
                             f'\n\n**Name: {p.pickup_point.name}**'
                             f'\n**Address: {p.pickup_point.post_code} {p.pickup_point.city}, '
                             f'{p.pickup_point.street} {p.pickup_point.building_number}**\n'
@@ -678,15 +682,17 @@ async def main(config, inp: Dict):
                         case ParcelStatus.DELIVERED:
                             await event.answer('Parcel already delivered!', alert=True)
                         case ParcelStatus.READY_TO_PICKUP:
-                            if (p.pickup_point.latitude - 0.0005 <= event.message.geo.lat <= p.pickup_point.latitude + 0.0005) \
+                            if (
+                                    p.pickup_point.latitude - 0.0005 <= event.message.geo.lat <= p.pickup_point.latitude + 0.0005) \
                                     and \
-                               (p.pickup_point.longitude - 0.0005 <= event.message.geo.long <= p.pickup_point.longitude + 0.0005):
+                                    (
+                                            p.pickup_point.longitude - 0.0005 <= event.message.geo.long <= p.pickup_point.longitude + 0.0005):
                                 await event.reply('Your location is within the range, should I open?',
                                                   buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
                             else:
                                 await event.reply(
                                     f'Your location is outside the range that is allowed to open this parcel machine. '
-                                    f'Confirm that you are standing near by, there is description:'
+                                    f'Confirm that you are standing nearby, there is description:'
                                     f'\n\n**Name: {p.pickup_point.name}**'
                                     f'\n**Address: {p.pickup_point.post_code} {p.pickup_point.city}, '
                                     f'{p.pickup_point.street} {p.pickup_point.building_number}**\n'
