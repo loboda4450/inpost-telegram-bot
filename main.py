@@ -99,11 +99,11 @@ async def show_oc(event, inp, shipment_number):
 
 async def open_comp(event, inp, p: Parcel):
     await inp[event.sender.id].collect(parcel_obj=p)
-    await event.answer(
+    await event.reply(
         f'Compartment opened!\nLocation:\n   '
         f'Side: {p.compartment_location.side}\n   '
         f'Row: {p.compartment_location.row}\n   '
-        f'Column: {p.compartment_location.column}', alert=True)
+        f'Column: {p.compartment_location.column}')
 
 
 async def send_details(event, inp, shipment_number):
@@ -618,98 +618,140 @@ async def main(config, inp: Dict):
 
     @client.on(CallbackQuery(pattern=b'Open Compartment'))
     async def open_compartment(event):
-        if event.sender.id in inp:
-            msg = await event.get_message()
-            shipment_number = \
-                (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
-            try:
-                p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
-
-                match p.status:
-                    case ParcelStatus.DELIVERED:
-                        await event.answer('Parcel already delivered!', alert=True)
-                    case ParcelStatus.READY_TO_PICKUP:
-                        await event.reply('Are you sure? This operation is irreversible!',
-                                          buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
-                    case _:
-                        await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
-
-            except NotAuthenticatedError as e:
-                await event.reply(e.reason)
-            except ParcelTypeError as e:
-                await event.reply(e.reason)
-            except UnauthorizedError:
-                if await inp[event.sender.id].refresh_token():
-                    try:
-                        p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
-
-                        match p.status:
-                            case ParcelStatus.DELIVERED:
-                                await event.answer('Parcel already delivered!', alert=True)
-                            case ParcelStatus.READY_TO_PICKUP:
-                                await event.reply('Are you sure? This operation is irreversible!',
-                                                  buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
-                            case _:
-                                await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}',
-                                                   alert=True)
-
-                    except Exception as e:
-                        logger.exception(e)
-                        await event.reply('Bad things happened, call admin now!')
-                else:
-                    await event.reply('You are not authorized, initialize first!')
-            except NotFoundError:
-                await event.reply('Parcel not found')
-            except UnidentifiedAPIError as e:
-                logger.exception(e)
-                await event.reply('Unexpected error occurred, call admin')
-            except Exception as e:
-                logger.exception(e)
-                await event.reply('Bad things happened, call admin now!')
-
-        else:
+        if event.sender.id not in inp:
             await event.reply('You are not initialized')
+
+        await event.reply('Please share your location so I can check whether you are near parcel machine or not.',
+                          buttons=[Button.request_location('Confirm localization')])
+
+    @client.on(NewMessage())
+    async def location_confirmation(event):
+        if not event.message.geo:
+            return
+
+        if event.sender.id not in inp:
+            await event.reply('You are not initialized')
+            return
+        msg = await event.get_reply_message()
+        msg = await msg.get_reply_message()
+
+        shipment_number = \
+            (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
+        try:
+            p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
+            # (51.96333351198862, 19.69786269448417)
+            # (51.96399, 19.69657)
+
+            match p.status:
+                case ParcelStatus.DELIVERED:
+                    await event.answer('Parcel already delivered!', alert=True)
+                case ParcelStatus.READY_TO_PICKUP:
+                    if (p.pickup_point.latitude - 0.0005 <= event.message.geo.lat <= p.pickup_point.latitude + 0.0005) \
+                            and \
+                            (
+                                    p.pickup_point.longitude - 0.0005 <= event.message.geo.long <= p.pickup_point.longitude + 0.0005):
+                        await event.reply('You are within the range, open?',
+                                          buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+                    else:
+                        await event.reply(
+                            f'Your location is outside the range that is allowed to open this parcel machine. '
+                            f'Confirm that you are standing near by, there is description:'
+                            f'\n\n**Name: {p.pickup_point.name}**'
+                            f'\n**Address: {p.pickup_point.post_code} {p.pickup_point.city}, '
+                            f'{p.pickup_point.street} {p.pickup_point.building_number}**\n'
+                            f'**Description: {p.pickup_point.description}**\n\n'
+                            f'Do you still want me to open it for you?',
+                            buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+                case _:
+                    await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
+
+        except NotAuthenticatedError as e:
+            await event.reply(e.reason)
+        except ParcelTypeError as e:
+            await event.reply(e.reason)
+        except UnauthorizedError:
+            if await inp[event.sender.id].refresh_token():
+                try:
+                    p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
+
+                    match p.status:
+                        case ParcelStatus.DELIVERED:
+                            await event.answer('Parcel already delivered!', alert=True)
+                        case ParcelStatus.READY_TO_PICKUP:
+                            if (p.pickup_point.latitude - 0.0005 <= event.message.geo.lat <= p.pickup_point.latitude + 0.0005) \
+                                    and \
+                               (p.pickup_point.longitude - 0.0005 <= event.message.geo.long <= p.pickup_point.longitude + 0.0005):
+                                await event.reply('Your location is within the range, should I open?',
+                                                  buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+                            else:
+                                await event.reply(
+                                    f'Your location is outside the range that is allowed to open this parcel machine. '
+                                    f'Confirm that you are standing near by, there is description:'
+                                    f'\n\n**Name: {p.pickup_point.name}**'
+                                    f'\n**Address: {p.pickup_point.post_code} {p.pickup_point.city}, '
+                                    f'{p.pickup_point.street} {p.pickup_point.building_number}**\n'
+                                    f'**Description: {p.pickup_point.description}**\n\n'
+                                    f'Do you still want me to open it for you?',
+                                    buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+                        case _:
+                            await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
+
+                except Exception as e:
+                    logger.exception(e)
+                    await event.reply('Bad things happened, call admin now!')
+            else:
+                await event.reply('You are not authorized, initialize first!')
+        except NotFoundError:
+            await event.reply('Parcel not found')
+        except UnidentifiedAPIError as e:
+            logger.exception(e)
+            await event.reply('Unexpected error occurred, call admin')
+        except Exception as e:
+            logger.exception(e)
+            await event.reply('Bad things happened, call admin now!')
 
     @client.on(CallbackQuery(pattern=b'Yes!'))
     async def yes(event):
-        if event.sender.id in inp:
-            msg = await event.get_message()
-            msg = await msg.get_reply_message()
-            shipment_number = \
-                (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
-            p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
-            try:
-                await open_comp(event, inp, p)
-
-            except NotAuthenticatedError as e:
-                await event.reply(e.reason)
-            except ParcelTypeError as e:
-                await event.reply(e.reason)
-            except UnauthorizedError:
-                if await inp[event.sender.id].refresh_token():
-                    try:
-                        await open_comp(event, inp, p)
-
-                    except Exception as e:
-                        logger.exception(e)
-                        await event.reply('Bad things happened, call admin now!')
-                else:
-                    await event.reply('You are not authorized, initialize first!')
-            except NotFoundError:
-                await event.reply('Parcel not found')
-            except UnidentifiedAPIError as e:
-                logger.exception(e)
-                await event.reply('Unexpected error occurred, call admin')
-            except Exception as e:
-                logger.exception(e)
-                await event.reply('Bad things happened, call admin now!')
-
-        else:
+        if event.sender.id not in inp:
             await event.reply('You are not initialized')
+
+        msg = await event.get_message()
+        msg = await msg.get_reply_message()
+        msg = await msg.get_reply_message()
+        msg = await msg.get_reply_message()  # ffs gotta move 3 messages upwards
+        shipment_number = \
+            (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
+        p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
+
+        try:
+            await open_comp(event, inp, p)
+
+        except NotAuthenticatedError as e:
+            await event.reply(e.reason)
+        except ParcelTypeError as e:
+            await event.reply(e.reason)
+        except UnauthorizedError:
+            if await inp[event.sender.id].refresh_token():
+                try:
+                    await open_comp(event, inp, p)
+
+                except Exception as e:
+                    logger.exception(e)
+                    await event.reply('Bad things happened, call admin now!')
+            else:
+                await event.reply('You are not authorized, initialize first!')
+        except NotFoundError:
+            await event.reply('Parcel not found')
+        except UnidentifiedAPIError as e:
+            logger.exception(e)
+            await event.reply('Unexpected error occurred, call admin')
+        except Exception as e:
+            logger.exception(e)
+            await event.reply('Bad things happened, call admin now!')
 
     @client.on(CallbackQuery(pattern=b'Hell no!'))
     async def no(event):
-        await event.answer('Fine, compartment remains closed!')
+        await event.reply('Fine, compartment remains closed!')
 
     @client.on(CallbackQuery(pattern=b'Details'))
     async def details(event):
