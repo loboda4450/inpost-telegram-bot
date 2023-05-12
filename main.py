@@ -627,8 +627,9 @@ async def main(config, inp: Dict):
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
 
-        await event.reply('Please share your location so I can check whether you are near parcel machine or not.',
-                          buttons=[Button.request_location('Confirm localization')])
+        await event.reply('Please share your location so I can check whether you are near parcel machine or not. '
+                          'If you are a Apple user please send your location message as a reply to this message manually',
+                          buttons=[Button.request_location('Confirm location')])
 
     @client.on(NewMessage())
     async def location_confirmation(event):
@@ -659,7 +660,7 @@ async def main(config, inp: Dict):
                     else:
                         await event.reply(
                             f'Your location is outside the range that is allowed to open this parcel machine. '
-                            f'Confirm that you are standing nearby, there is description:'
+                            f'Confirm that you are standing nearby, there is more detailed description:'
                             f'\n\n**Name: {p.pickup_point.name}**'
                             f'\n**Address: {p.pickup_point.post_code} {p.pickup_point.city}, '
                             f'{p.pickup_point.street} {p.pickup_point.building_number}**\n'
