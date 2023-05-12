@@ -649,7 +649,7 @@ async def main(config, inp: Dict):
 
             match p.status:
                 case ParcelStatus.DELIVERED:
-                    await event.answer('Parcel already delivered!', alert=True)
+                    await event.reply('Parcel already delivered!')
                 case ParcelStatus.READY_TO_PICKUP:
                     if (p.pickup_point.latitude - 0.0005 <= event.message.geo.lat <= p.pickup_point.latitude + 0.0005) \
                             and \
@@ -668,7 +668,7 @@ async def main(config, inp: Dict):
                             f'Do you still want me to open it for you?',
                             buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
                 case _:
-                    await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
+                    await event.reply(f'Parcel not ready for pick up!\nStatus: {p.status.value}')
 
         except NotAuthenticatedError as e:
             await event.reply(e.reason)
@@ -681,7 +681,7 @@ async def main(config, inp: Dict):
 
                     match p.status:
                         case ParcelStatus.DELIVERED:
-                            await event.answer('Parcel already delivered!', alert=True)
+                            await event.reply('Parcel already delivered!')
                         case ParcelStatus.READY_TO_PICKUP:
                             if (
                                     p.pickup_point.latitude - 0.0005 <= event.message.geo.lat <= p.pickup_point.latitude + 0.0005) \
@@ -701,7 +701,7 @@ async def main(config, inp: Dict):
                                     f'Do you still want me to open it for you?',
                                     buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
                         case _:
-                            await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
+                            await event.reply(f'Parcel not ready for pick up!\nStatus: {p.status.value}')
 
                 except Exception as e:
                     logger.exception(e)
