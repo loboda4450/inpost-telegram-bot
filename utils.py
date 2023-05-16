@@ -4,6 +4,9 @@ from inpost.static import Parcel, ParcelShipmentType, ParcelStatus
 from telethon import Button
 from telethon.events import NewMessage, CallbackQuery
 
+from constants import multicompartment_message_builder, compartment_message_builder, delivered_message_builder, \
+    details_message_builder, open_comp_message_builder, ready_to_pickup_message_builder
+
 
 async def get_phone_number(inp: dict, event: NewMessage):
     if len(inp[event.sender.id]) == 1:
@@ -75,24 +78,13 @@ async def send_pcgs(event, inp, status):
                                   f'📦 **Shipment number:** `{p.shipment_number}\n`' for p in packages if
                                   not p.is_main_multicompartment)
 
-                message = f'⚠️ **THIS IS MULTICOMPARTMENT CONTAINING {len(packages)} PARCELS!** ⚠\n️\n' \
-                          f'📤 **Sender:** `{package.sender.sender_name}`\n' \
-                          f'📦 **Shipment number:** `{package.shipment_number}`\n' \
-                          f'📮 **Status:** `{package.status.value}`\n' \
-                          f'📥 **Pick up point:** `{package.pickup_point}, {package.pickup_point.city} ' \
-                          f'{package.pickup_point.street} {package.pickup_point.building_number}`\n\n' \
-                          f'Other parcels inside:\n{other}'
+                message = multicompartment_message_builder(amount=len(packages), package=package, other=other)
 
             elif package.shipment_type == ParcelShipmentType.courier:
-                message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
-                          f'📦 **Shipment number:** `{package.shipment_number}`\n' \
-                          f'📮 **Status:** `{package.status.value}`\n'
+                message = delivered_message_builder(package=package)
+
             else:
-                message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
-                          f'📦 **Shipment number:** `{package.shipment_number}`\n' \
-                          f'📮 **Status:** `{package.status.value}`\n' \
-                          f'📥 **Pick up point:** `{package.pickup_point}, {package.pickup_point.city} ' \
-                          f'{package.pickup_point.street} {package.pickup_point.building_number}`'
+                message = compartment_message_builder(package=package)
 
             if package.status in (ParcelStatus.STACK_IN_BOX_MACHINE, ParcelStatus.STACK_IN_CUSTOMER_SERVICE_POINT):
                 message = f'⚠️ **PARCEL IS IN SUBSTITUTIONARY PICK UP POINT!** ⚠\n️\n' + message
@@ -141,11 +133,7 @@ async def show_oc(event, inp, shipment_number):
 async def open_comp(event, inp, p: Parcel):
     phone_number = await get_phone_number(inp, event)
     await inp[event.sender.id][phone_number]['inpost'].collect(parcel_obj=p)
-    await event.reply(
-        f'Compartment opened!\nLocation:\n   '
-        f'Side: {p.compartment_location.side}\n   '
-        f'Row: {p.compartment_location.row}\n   '
-        f'Column: {p.compartment_location.column}')
+    await event.reply(open_comp_message_builder(parcel=p))
 
 
 async def send_details(event, inp, shipment_number):
@@ -164,10 +152,7 @@ async def send_details(event, inp, shipment_number):
                 f'{status.date.to("local").format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in
                 p.event_log)
             if p.status == ParcelStatus.READY_TO_PICKUP:
-                message = message + f'**Shipment number**: {p.shipment_number}\n' \
-                                    f'**Stored**: {p.stored_date.to("local").format("DD.MM.YYYY HH:mm")}\n' \
-                                    f'**Open code**: {p.open_code}\n' \
-                                    f'**Events**:\n{events}\n\n'
+                message = message + details_message_builder(parcel=p, events=events)
 
             elif p.status == ParcelStatus.DELIVERED:
                 message = message + f'**Stored**: {p.stored_date.to("local").format("DD.MM.YYYY HH:mm")}\n' \
@@ -181,10 +166,7 @@ async def send_details(event, inp, shipment_number):
             f'{status.date.to("local").format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in
             parcel.event_log)
         if parcel.status == ParcelStatus.READY_TO_PICKUP:
-            await event.reply(f'**Stored**: {parcel.stored_date.to("local").format("DD.MM.YYYY HH:mm")}\n'
-                              f'**Open code**: {parcel.open_code}\n'
-                              f'**Events**:\n{events}'
-                              )
+            await event.reply(ready_to_pickup_message_builder(parcel=parcel, events=events))
         elif parcel.status == ParcelStatus.DELIVERED:
             await event.reply(f'**Picked up**: {parcel.pickup_date.to("local").format("DD.MM.YYYY HH:mm")}\n'
                               f'**Events**:\n{events}'

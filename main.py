@@ -15,6 +15,10 @@ from inpost.static import ParcelStatus
 from inpost.static.exceptions import *
 from inpost.api import Inpost
 
+from constants import pending_statuses, welcome_message, multicompartment_message_builder, \
+    compartment_message_builder, courier_message_builder, out_of_range_message_builder, \
+    friend_invitations_message_builder
+
 
 async def reply(event: NewMessage.Event | CallbackQuery.Event, text: str, alert=True):
     if isinstance(event, CallbackQuery.Event):
@@ -54,24 +58,7 @@ async def main(config, inp: Dict):
 
     @client.on(NewMessage(pattern='/start'))
     async def start(event):
-        await event.reply('Hello!\nThis is a bot helping you to manage your InPost parcels!\n'
-                          'If you want to contribute to Inpost development you can find us there: '
-                          '[Inpost](https://github.com/IFOSSA/inpost-python)\n\n'
-                          'Log in using button that just shown up below the text box '
-                          'or by typing `/init <phone_number>`!\n\n'
-                          '**List of commands:**\n'
-                          '/start - display start message and allow user to login with Telegram\n'
-                          '/init - login using phone number `/init <phone_number>`\n'
-                          '/confirm - confirm login with sms code `/confirm <sms_code>`\n'
-                          '/refresh - refresh authorization token\n'
-                          '/pending - return pending parcels\n'
-                          '/delivered - return delivered parcels\n'
-                          '/parcel - return parcel `/parcel <shipment_number>`\n'
-                          '/friends - list all known inpost friends \n'
-                          '/share <reply to parcel message> - share parcel to listed friend\n'
-                          '/all - return all available parcels\n'
-                          '/clear - if you accidentally invoked `/start` and annoying box sprang up',
-                          buttons=[Button.request_phone('Log in via Telegram')])
+        await event.reply(welcome_message, buttons=[Button.request_phone('Log in via Telegram')])
 
     @client.on(NewMessage())
     async def init(event):
@@ -202,23 +189,12 @@ async def main(config, inp: Dict):
                                   f'📦 **Shipment number:** `{p.shipment_number}`' for p in packages if
                                   not p.is_main_multicompartment)
 
-                message = f'⚠️ **THIS IS MULTICOMPARTMENT CONTAINING {len(packages)} PARCELS!** ⚠\n️\n' \
-                          f'📤 **Sender:** `{package.sender.sender_name}`\n' \
-                          f'📦 **Shipment number:** `{package.shipment_number}`\n' \
-                          f'📮 **Status:** `{package.status.value}`\n' \
-                          f'📥 **Pick up point:** `{package.pickup_point}, {package.pickup_point.city} ' \
-                          f'{package.pickup_point.street} {package.pickup_point.building_number}`\n\n' \
-                          f'Other parcels inside:\n{other}'
+                message = multicompartment_message_builder(amount=len(packages), package=package, other=other)
+
             elif package.status == ParcelStatus.DELIVERED:
-                message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
-                          f'📦 **Shipment number:** `{package.shipment_number}`\n' \
-                          f'📮 **Status:** `{package.status.value}`'
+                message = courier_message_builder(package=package)
             else:
-                message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
-                          f'📦 **Shipment number:** `{package.shipment_number}`\n' \
-                          f'📮 **Status:** `{package.status.value}`\n' \
-                          f'📥 **Pick up point:** `{package.pickup_point}, {package.pickup_point.city} ' \
-                          f'{package.pickup_point.street} {package.pickup_point.building_number}`'
+                message = compartment_message_builder(package=package)
 
             match package.status:
                 case ParcelStatus.READY_TO_PICKUP:
@@ -309,10 +285,7 @@ async def main(config, inp: Dict):
                                   buttons=[Button.inline('Remove')])
 
             for i in friends['invitations']:
-                await event.reply(f'**Name**: {i["friend"]["name"]}\n'
-                                  f'**Phone number**: {i["friend"]["phoneNumber"]}\n'
-                                  f'**Invitation code**: `{i["invitationCode"]}`\n'
-                                  f'**Expiry date**: {i["expiryDate"]}',
+                await event.reply(friend_invitations_message_builder(friend=i),
                                   buttons=[Button.inline('Remove')])
 
         except NotAuthenticatedError as e:
@@ -462,15 +435,8 @@ async def main(config, inp: Dict):
                         await event.reply('You are within the range, open?',
                                           buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
                     else:
-                        await event.reply(
-                            f'Your location is outside the range that is allowed to open this parcel machine. '
-                            f'Confirm that you are standing nearby, there is description:'
-                            f'\n\n**Name: {p.pickup_point.name}**'
-                            f'\n**Address: {p.pickup_point.post_code} {p.pickup_point.city}, '
-                            f'{p.pickup_point.street} {p.pickup_point.building_number}**\n'
-                            f'**Description: {p.pickup_point.description}**\n\n'
-                            f'Do you still want me to open it for you?',
-                            buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+                        await event.reply(out_of_range_message_builder(parcel=p),
+                                          buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
                 case _:
                     await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
 
