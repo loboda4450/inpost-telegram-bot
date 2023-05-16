@@ -24,7 +24,10 @@ From now, you are able to get full functionality from the bot! Head to the `Comm
 
 
 ## Commands
-
+If you have only one phone number set, you are good to go. 
+If desired command relate to default phone number you don't have to do anything else.
+But if you want to call command on specific phone number, you have to do it this way: `/command <phone_number> <following part of command>`. 
+> For example: `/confirm 123456789 654321` or `/parcel 123456789 123456789123456789123456`
 - `/start` - display start message and allow user to log in with Telegram
 - `/clear` - if you accidentally invoked `/start` and annoying box sprang up
 - `/init <phone number>` - login using phone number
