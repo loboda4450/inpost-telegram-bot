@@ -94,7 +94,7 @@ async def main(config, inp: Dict):
         try:
             inp[event.sender.id][phone_number]['inpost'] = Inpost()
             inp[event.sender.id][phone_number]['config'] = {'airquality': True,
-                                                            'default_parcel_machine': '',
+                                                            'default_parcel_machine': None,
                                                             'geocheck': True,
                                                             'notifications': True}
 
