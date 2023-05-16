@@ -19,6 +19,7 @@ class PhoneNumberConfig(db.Entity):
 
 class User(db.Entity):
     userid = PrimaryKey(int, size=64)
+    default_phone_number = Optional(int)
     phone_numbers = Set(PhoneNumberConfig)
 
 
@@ -28,7 +29,7 @@ db.generate_mapping(create_tables=True)
 @db_session
 def add_user(event: NewMessage):
     if not User.exists(userid=event.sender.id):
-        User(userid=event.sender.id)
+        return User(userid=event.sender.id)
 
 
 @db_session
@@ -43,6 +44,16 @@ def add_phone_number_config(event: NewMessage, phone_number: int, notifications:
                                   airquality=airquality)
 
         commit()
+
+
+@db_session
+def edit_default_phone_number(event: NewMessage, default_phone_number: int):
+    if not User.exists(userid=event.sender.id):
+        return
+
+    User.get_for_update(userid=event.sender.id)
+    User.default_phone_number = default_phone_number
+    commit()
 
 
 @db_session
