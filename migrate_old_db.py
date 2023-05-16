@@ -2,7 +2,7 @@ import database
 
 from pony.orm import *
 
-old_db = Database('sqlite', 'path/to/your/database')
+old_db = Database('sqlite', '/path/to/your/database')
 
 
 class User(old_db.Entity):
@@ -15,9 +15,10 @@ class User(old_db.Entity):
 
 old_db.generate_mapping()
 
-for user in User.select():
-    new_user = database.User(userid=user.userid)
-    new_user.phone_numbers.create(phone_number=user.phone_number, sms_code=user.sms_code, refr_token=user.refr_token,
-                                  auth_token=user.auth_token, notifications=True, geocheck=True, airquality=True)
+with db_session:
+    for user in User.select():
+        new_user = database.User(userid=user.userid)
+        new_user.phone_numbers.create(phone_number=user.phone_number, sms_code=user.sms_code, refr_token=user.refr_token,
+                                      auth_token=user.auth_token, notifications=True, geocheck=True, airquality=True)
 
-commit()
+    commit()
