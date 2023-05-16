@@ -1,4 +1,8 @@
-from telethon.events import NewMessage
+from typing import List
+
+from inpost.static import Parcel, ParcelShipmentType, ParcelStatus
+from telethon import Button
+from telethon.events import NewMessage, CallbackQuery
 
 
 async def get_phone_number(inp: dict, event: NewMessage):
@@ -48,3 +52,142 @@ async def validate_number(event: NewMessage, phone_number: bool) -> str | None:
             return None
 
     return event.text.split()[1].strip()
+
+
+async def send_pcgs(event, inp, status):
+    phone_number = await get_phone_number(inp, event)
+    packages: List[Parcel] = await inp[event.sender.id][phone_number]['inpost'].get_parcels(status=status, parse=True)
+    exclude = []
+    if len(packages) > 0:
+        for package in packages:
+            if package.shipment_number in exclude:
+                continue
+
+            if package.is_multicompartment and not package.is_main_multicompartment:
+                exclude.append(package.shipment_number)
+                continue
+
+            elif package.is_main_multicompartment:
+                packages: List[Parcel] = await inp[event.sender.id][phone_number]['inpost'].get_multi_compartment(
+                    multi_uuid=package.multi_compartment.uuid, parse=True)
+                package = next((parcel for parcel in packages if parcel.is_main_multicompartment), None)
+                other = '\n'.join(f'📤 **Sender:** `{p.sender.sender_name}`\n'
+                                  f'📦 **Shipment number:** `{p.shipment_number}\n`' for p in packages if
+                                  not p.is_main_multicompartment)
+
+                message = f'⚠️ **THIS IS MULTICOMPARTMENT CONTAINING {len(packages)} PARCELS!** ⚠\n️\n' \
+                          f'📤 **Sender:** `{package.sender.sender_name}`\n' \
+                          f'📦 **Shipment number:** `{package.shipment_number}`\n' \
+                          f'📮 **Status:** `{package.status.value}`\n' \
+                          f'📥 **Pick up point:** `{package.pickup_point}, {package.pickup_point.city} ' \
+                          f'{package.pickup_point.street} {package.pickup_point.building_number}`\n\n' \
+                          f'Other parcels inside:\n{other}'
+
+            elif package.shipment_type == ParcelShipmentType.courier:
+                message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
+                          f'📦 **Shipment number:** `{package.shipment_number}`\n' \
+                          f'📮 **Status:** `{package.status.value}`\n'
+            else:
+                message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
+                          f'📦 **Shipment number:** `{package.shipment_number}`\n' \
+                          f'📮 **Status:** `{package.status.value}`\n' \
+                          f'📥 **Pick up point:** `{package.pickup_point}, {package.pickup_point.city} ' \
+                          f'{package.pickup_point.street} {package.pickup_point.building_number}`'
+
+            if package.status in (ParcelStatus.STACK_IN_BOX_MACHINE, ParcelStatus.STACK_IN_CUSTOMER_SERVICE_POINT):
+                message = f'⚠️ **PARCEL IS IN SUBSTITUTIONARY PICK UP POINT!** ⚠\n️\n' + message
+
+            match package.status:
+                case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE | ParcelStatus.STACK_IN_CUSTOMER_SERVICE_POINT:
+                    await event.reply(message + f'\n🫳 **Pick up until:** '
+                                                f'`{package.expiry_date.to("local").format("DD.MM.YYYY HH:mm")}`',
+                                      buttons=[
+                                          [Button.inline('Open Code'), Button.inline('QR Code')],
+                                          [Button.inline('Details'), Button.inline('Open Compartment')], ]
+                                      )
+                case _:
+                    await event.reply(message,
+                                      buttons=[Button.inline('Details'), ])
+
+    else:
+        if isinstance(event, CallbackQuery.Event):
+            await event.answer('No parcels with specified status!', alert=True)
+        elif isinstance(event, NewMessage.Event):
+            await event.reply('No parcels with specified status!')
+
+    return status
+
+
+async def send_qrc(event, inp, shipment_number):
+    phone_number = await get_phone_number(inp, event)
+    p: Parcel = await inp[event.sender.id][phone_number]['inpost'].get_parcel(shipment_number=shipment_number,
+                                                                              parse=True)
+    if p.status == ParcelStatus.READY_TO_PICKUP:
+        await event.reply(file=p.generate_qr_image)
+    else:
+        await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
+
+
+async def show_oc(event, inp, shipment_number):
+    phone_number = await get_phone_number(inp, event)
+    p: Parcel = await inp[event.sender.id][phone_number]['inpost'].get_parcel(shipment_number=shipment_number,
+                                                                              parse=True)
+    if p.status == ParcelStatus.READY_TO_PICKUP:
+        await event.answer(f'This parcel open code is: {p.open_code}', alert=True)
+    else:
+        await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
+
+
+async def open_comp(event, inp, p: Parcel):
+    phone_number = await get_phone_number(inp, event)
+    await inp[event.sender.id][phone_number]['inpost'].collect(parcel_obj=p)
+    await event.reply(
+        f'Compartment opened!\nLocation:\n   '
+        f'Side: {p.compartment_location.side}\n   '
+        f'Row: {p.compartment_location.row}\n   '
+        f'Column: {p.compartment_location.column}')
+
+
+async def send_details(event, inp, shipment_number):
+    phone_number = await get_phone_number(inp, event)
+    parcel: Parcel = await inp[event.sender.id][phone_number]['inpost'].get_parcel(shipment_number=shipment_number,
+                                                                                   parse=True)
+
+    if parcel.is_multicompartment:
+        parcels = await inp[event.sender.id][phone_number]['inpost'].get_multi_compartment(
+            multi_uuid=parcel.multi_compartment.uuid, parse=True)
+        message = ''
+
+        for p in parcels:
+            message = message + f'**Sender:** {p.sender}\n'
+            events = "\n".join(
+                f'{status.date.to("local").format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in
+                p.event_log)
+            if p.status == ParcelStatus.READY_TO_PICKUP:
+                message = message + f'**Shipment number**: {p.shipment_number}\n' \
+                                    f'**Stored**: {p.stored_date.to("local").format("DD.MM.YYYY HH:mm")}\n' \
+                                    f'**Open code**: {p.open_code}\n' \
+                                    f'**Events**:\n{events}\n\n'
+
+            elif p.status == ParcelStatus.DELIVERED:
+                message = message + f'**Stored**: {p.stored_date.to("local").format("DD.MM.YYYY HH:mm")}\n' \
+                                    f'**Events**:\n{events}\n\n'
+            else:
+                message = message + f'**Events**:\n{events}\n\n'
+
+        await event.reply(message)
+    else:
+        events = "\n".join(
+            f'{status.date.to("local").format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in
+            parcel.event_log)
+        if parcel.status == ParcelStatus.READY_TO_PICKUP:
+            await event.reply(f'**Stored**: {parcel.stored_date.to("local").format("DD.MM.YYYY HH:mm")}\n'
+                              f'**Open code**: {parcel.open_code}\n'
+                              f'**Events**:\n{events}'
+                              )
+        elif parcel.status == ParcelStatus.DELIVERED:
+            await event.reply(f'**Picked up**: {parcel.pickup_date.to("local").format("DD.MM.YYYY HH:mm")}\n'
+                              f'**Events**:\n{events}'
+                              )
+        else:
+            await event.reply(f'**Events**:\n{events}')
