@@ -33,23 +33,31 @@ def add_user(event: NewMessage):
 
 
 @db_session
-def add_phone_number_config(event: NewMessage, phone_number: int, notifications: bool = True, geocheck: bool = True,
+def add_phone_number_config(event: NewMessage, phone_number: int | str, notifications: bool = True, geocheck: bool = True,
                             airquality: bool = True):
-    if User.exists(userid=event.sender.id):
-        user = User.get_for_update(userid=event.sender.id)
+    if not User.exists(userid=event.sender.id):
+        return
 
-        user.phone_numbers.create(phone_number=phone_number,
-                                  notifications=notifications,
-                                  geocheck=geocheck,
-                                  airquality=airquality)
+    if isinstance(phone_number, str):
+        phone_number = int(phone_number)
 
-        commit()
+    user = User.get_for_update(userid=event.sender.id)
+
+    user.phone_numbers.create(phone_number=phone_number,
+                              notifications=notifications,
+                              geocheck=geocheck,
+                              airquality=airquality)
+
+    commit()
 
 
 @db_session
-def edit_default_phone_number(event: NewMessage, default_phone_number: int):
+def edit_default_phone_number(event: NewMessage, default_phone_number: int | str):
     if not User.exists(userid=event.sender.id):
         return
+
+    if isinstance(default_phone_number, str):
+        default_phone_number = int(default_phone_number)
 
     User.get_for_update(userid=event.sender.id)
     User.default_phone_number = default_phone_number
@@ -92,6 +100,9 @@ def edit_phone_number_config(event: NewMessage, phone_number: int, sms_code: int
 
 @db_session
 def delete_user(event: NewMessage):
+    if not User.exists(userid=event.sender.id):
+        return
+
     User.get(userid=event.sender.id).delete()
 
 
