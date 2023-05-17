@@ -1,12 +1,13 @@
 from typing import List
 
-from arrow import arrow
+import arrow
 from inpost.static import Parcel, ParcelShipmentType, ParcelStatus
 from telethon import Button
 from telethon.events import NewMessage, CallbackQuery
 
 from constants import multicompartment_message_builder, compartment_message_builder, delivered_message_builder, \
-    details_message_builder, open_comp_message_builder, ready_to_pickup_message_builder
+    details_message_builder, open_comp_message_builder, ready_to_pickup_message_builder, courier_message_builder, \
+    out_of_range_message_builder
 
 
 class BotUserConfig:
@@ -16,7 +17,20 @@ class BotUserConfig:
         self.geocheck: bool = kwargs['geocheck']
         self.airquality: bool = kwargs['airquality']
         self.location: tuple | None = kwargs['location'] if 'location' in kwargs else None  # lat, long
-        self.location_time: arrow | None = kwargs['location_time'] if 'location_time' in kwargs else None
+        self.location_time: arrow.arrow | None = kwargs['location_time'] if 'location_time' in kwargs else None
+        self.location_time_lock: bool = False
+
+
+async def init_phone_number(event: NewMessage) -> str | None:
+    if event.message.contact:  # first check if NewMessage contains contact field
+        return event.message.contact.phone_number[-9:]  # cut the region part, 9 last digits
+    elif not event.text.startswith('/init'):  # then check if starts with /init, if so proceed
+        return None
+    elif len(event.text.split(' ')) == 2 and event.text.split()[1].strip().isdigit():
+        return event.text.split()[1].strip()
+    else:
+        await event.reply('Something is wrong with provided phone number')
+        return None
 
 
 async def get_phone_number(inp: dict, event: NewMessage):
@@ -40,6 +54,27 @@ async def get_phone_number(inp: dict, event: NewMessage):
 
     else:
         return await validate_number(event=event, phone_number=True)
+
+
+async def confirm_location(event: NewMessage, inp: dict, phone_number, shipment_number):
+    p: Parcel = await inp[event.sender.id][phone_number]['inpost'].get_parcel(shipment_number=shipment_number,
+                                                                              parse=True)
+
+    match p.status:
+        case ParcelStatus.DELIVERED:
+            await event.answer('Parcel already delivered!', alert=True)
+        case ParcelStatus.READY_TO_PICKUP:
+            if (p.pickup_point.latitude - 0.0005 <= event.message.geo.lat <= p.pickup_point.latitude + 0.0005) \
+                    and \
+                    (
+                            p.pickup_point.longitude - 0.0005 <= event.message.geo.long <= p.pickup_point.longitude + 0.0005):
+                await event.reply('You are within the range, open?',
+                                  buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+            else:
+                await event.reply(out_of_range_message_builder(parcel=p),
+                                  buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+        case _:
+            await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
 
 
 async def get_shipment_number(event: NewMessage):
@@ -81,12 +116,39 @@ async def validate_number(event: NewMessage, phone_number: bool) -> str | None:
     return event.text.split()[1].strip()
 
 
-async def send_pcgs(event, inp, status):
-    phone_number = await get_phone_number(inp, event)
-    if phone_number is None:
-        await event.reply('No phone number provided!')
-        return
+async def send_pcg(event: NewMessage, inp: dict, phone_number: int):
+    package: Parcel = await inp[event.sender.id][phone_number]['inpost'].get_parcel(
+        shipment_number=(get_shipment_number(event)), parse=True)
 
+    if package.is_multicompartment:
+        packages: List[Parcel] = await inp[event.sender.id][phone_number]['inpost'].get_multi_compartment(
+            multi_uuid=package.multi_compartment.uuid, parse=True)
+        package = next((parcel for parcel in packages if parcel.is_main_multicompartment), None)
+        other = '\n'.join(f'📤 **Sender:** `{p.sender.sender_name}`\n'
+                          f'📦 **Shipment number:** `{p.shipment_number}`' for p in packages if
+                          not p.is_main_multicompartment)
+
+        message = multicompartment_message_builder(amount=len(packages), package=package, other=other)
+
+    elif package.status == ParcelStatus.DELIVERED:
+        message = delivered_message_builder(package=package)
+    else:
+        message = compartment_message_builder(package=package)
+
+    match package.status:
+        case ParcelStatus.READY_TO_PICKUP:
+            await event.reply(message,
+                              buttons=[
+                                  [Button.inline('Open Code'), Button.inline('QR Code')],
+                                  [Button.inline('Details'), Button.inline('Open Compartment')]
+                              ]
+                              )
+        case _:
+            await event.reply(message,
+                              buttons=[Button.inline('Details')])
+
+
+async def send_pcgs(event, inp, status, phone_number):
     packages: List[Parcel] = await inp[event.sender.id][phone_number]['inpost'].get_parcels(status=status, parse=True)
     exclude = []
     if len(packages) > 0:

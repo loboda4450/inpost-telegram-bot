@@ -9,16 +9,14 @@ from telethon import TelegramClient, Button
 from telethon.events import NewMessage, CallbackQuery
 
 import database
-from utils import validate_number, get_phone_number, get_shipment_number, send_pcgs, send_qrc, show_oc, open_comp, \
-    send_details, BotUserConfig
+from utils import validate_number, get_phone_number, send_pcgs, send_qrc, show_oc, open_comp, \
+    send_details, BotUserConfig, send_pcg, init_phone_number, confirm_location
 
 from inpost.static import ParcelStatus
 from inpost.static.exceptions import *
 from inpost.api import Inpost
 
-from constants import pending_statuses, welcome_message, multicompartment_message_builder, \
-    compartment_message_builder, courier_message_builder, out_of_range_message_builder, \
-    friend_invitations_message_builder
+from constants import pending_statuses, welcome_message, friend_invitations_message_builder
 
 
 async def reply(event: NewMessage.Event | CallbackQuery.Event, text: str, alert=True):
@@ -65,49 +63,79 @@ async def main(config, inp: Dict):
         await event.reply(welcome_message, buttons=[Button.request_phone('Log in via Telegram')])
 
     @client.on(NewMessage())
-    async def init(event):
-        if event.message.contact:  # first check if NewMessage contains contact field
-            phone_number = event.message.contact.phone_number[-9:]  # cut the region part, 9 last digits
-        elif not event.text.startswith('/init'):  # then check if starts with /init, if so proceed
-            return
-        elif len(event.text.split(' ')) == 2 and event.text.split()[1].strip().isdigit():
-            phone_number = event.text.split()[1].strip()
+    async def new_message_handler(event):
+        #  I know, that's bullshit, gotta figure out better solution
+        phone_number = await init_phone_number(event=event)
+        if phone_number is not None:
+            if event.sender.id not in inp:
+                database.add_user(event=event)
+            elif phone_number in inp[event.sender.id]:
+                await event.reply('You initialized this number before')
+                return
+
+            try:
+                inp[event.sender.id][phone_number]['inpost'] = Inpost()
+                inp[event.sender.id][phone_number]['config'] = {'airquality': True,
+                                                                'default_parcel_machine': None,
+                                                                'geocheck': True,
+                                                                'notifications': True}
+
+                await inp[event.sender.id][phone_number]['inpost'].set_phone_number(phone_number=phone_number)
+                if await inp[event.sender.id][phone_number]['inpost'].send_sms_code():
+                    database.add_phone_number_config(event=event, phone_number=phone_number)
+                    await event.reply(
+                        f'Initialized with phone number: {inp[event.sender.id][phone_number]["inpost"].phone_number}!'
+                        f'\nSending sms code!', buttons=Button.clear())
+
+            except PhoneNumberError as e:
+                logger.exception(e)
+                await event.reply(e.reason)
+            except UnauthorizedError as e:
+                logger.exception(e)
+                await event.reply('You are not authorized')
+            except UnidentifiedAPIError as e:
+                logger.exception(e)
+                await event.reply('Unexpected error occurred, call admin')
+            except Exception as e:
+                logger.exception(e)
+                await event.reply('Bad things happened, call admin now!')
+        elif event.message.geo:  # validate location
+            phone_number = await get_phone_number(inp, event)
+            if phone_number is None:
+                await event.reply('No phone number provided!')
+                return
+
+            if event.sender.id not in inp:
+                await event.reply('You are not initialized')
+                return
+
+            msg = await event.get_reply_message()
+            msg = await msg.get_reply_message()
+            inp[event.sender.id][phone_number]['config'].location_time = arrow.now(tz='Europe/Warsaw')
+            inp[event.sender.id][phone_number]['config'].location = (event.message.geo.lat, event.message.geo.long)
+
+            shipment_number = \
+                (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
+
+            try:
+                await confirm_location(event=event, inp=inp, phone_number=phone_number, shipment_number=shipment_number)
+
+            except (NotAuthenticatedError, ParcelTypeError) as e:
+                logger.exception(e)
+                await event.reply(e.reason)
+            except UnauthorizedError as e:
+                logger.exception(e)
+                await event.reply('You are not authorized, initialize first!')
+            except NotFoundError:
+                await event.reply('Parcel not found')
+            except UnidentifiedAPIError as e:
+                logger.exception(e)
+                await event.reply('Unexpected error occurred, call admin')
+            except Exception as e:
+                logger.exception(e)
+                await event.reply('Bad things happened, call admin now!')
         else:
-            await event.reply('Something is wrong with provided phone number')
             return
-
-        if event.sender.id not in inp:
-            database.add_user(event=event)
-        elif phone_number in inp[event.sender.id]:
-            await event.reply('You initialized this number before')
-            return
-
-        try:
-            inp[event.sender.id][phone_number]['inpost'] = Inpost()
-            inp[event.sender.id][phone_number]['config'] = {'airquality': True,
-                                                            'default_parcel_machine': None,
-                                                            'geocheck': True,
-                                                            'notifications': True}
-
-            await inp[event.sender.id][phone_number]['inpost'].set_phone_number(phone_number=phone_number)
-            if await inp[event.sender.id][phone_number]['inpost'].send_sms_code():
-                database.add_phone_number_config(event=event, phone_number=phone_number)
-                await event.reply(
-                    f'Initialized with phone number: {inp[event.sender.id][phone_number]["inpost"].phone_number}!'
-                    f'\nSending sms code!', buttons=Button.clear())
-
-        except PhoneNumberError as e:
-            logger.exception(e)
-            await event.reply(e.reason)
-        except UnauthorizedError as e:
-            logger.exception(e)
-            await event.reply('You are not authorized')
-        except UnidentifiedAPIError as e:
-            logger.exception(e)
-            await event.reply('Unexpected error occurred, call admin')
-        except Exception as e:
-            logger.exception(e)
-            await event.reply('Bad things happened, call admin now!')
 
     @client.on(NewMessage(pattern='/confirm'))
     async def confirm_sms(event):
@@ -189,35 +217,7 @@ async def main(config, inp: Dict):
             return
 
         try:
-            package: Parcel = await inp[event.sender.id][phone_number]['inpost'].get_parcel(
-                shipment_number=(get_shipment_number(event)), parse=True)
-
-            if package.is_multicompartment:
-                packages: List[Parcel] = await inp[event.sender.id][phone_number]['inpost'].get_multi_compartment(
-                    multi_uuid=package.multi_compartment.uuid, parse=True)
-                package = next((parcel for parcel in packages if parcel.is_main_multicompartment), None)
-                other = '\n'.join(f'📤 **Sender:** `{p.sender.sender_name}`\n'
-                                  f'📦 **Shipment number:** `{p.shipment_number}`' for p in packages if
-                                  not p.is_main_multicompartment)
-
-                message = multicompartment_message_builder(amount=len(packages), package=package, other=other)
-
-            elif package.status == ParcelStatus.DELIVERED:
-                message = courier_message_builder(package=package)
-            else:
-                message = compartment_message_builder(package=package)
-
-            match package.status:
-                case ParcelStatus.READY_TO_PICKUP:
-                    await event.reply(message,
-                                      buttons=[
-                                          [Button.inline('Open Code'), Button.inline('QR Code')],
-                                          [Button.inline('Details'), Button.inline('Open Compartment')]
-                                      ]
-                                      )
-                case _:
-                    await event.reply(message,
-                                      buttons=[Button.inline('Details')])
+            await send_pcg(event, inp, phone_number)
 
         except NotAuthenticatedError as e:
             logger.exception(e)
@@ -245,6 +245,11 @@ async def main(config, inp: Dict):
             await event.reply('You are not initialized')
             return
 
+        phone_number = await get_phone_number(inp, event)
+        if phone_number is None:
+            await event.reply('No phone number provided!')
+            return
+
         status = None
         if isinstance(event, CallbackQuery.Event):
             if event.data == b'Pending Parcels':
@@ -262,7 +267,7 @@ async def main(config, inp: Dict):
                 return
 
         try:
-            await send_pcgs(event, inp, status)
+            await send_pcgs(event, inp, status, phone_number)
 
         except NotAuthenticatedError as e:
             await event.reply(e.reason)
@@ -532,69 +537,10 @@ async def main(config, inp: Dict):
             await event.reply('Please share your location so I can check whether you are near parcel machine or not.',
                               buttons=[Button.request_location('Confirm localization')])
 
+        inp[event.sender.id][phone_number]['config'].location_time_lock = True  # gotta do this in case someone would want to hit 'open compartment' button just on the edge, otherwise hitting 'yes' button could be davson-insensitive
         await event.reply('Less than 2 minutes have passed since the last compartment opening, '
                           'skipping location verification.\nAre you sure to open?',
                           buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
-
-    @client.on(NewMessage())
-    async def location_confirmation(event):
-        phone_number = await get_phone_number(inp, event)
-        if phone_number is None:
-            await event.reply('No phone number provided!')
-            return
-
-        if not event.message.geo and inp[event.sender.id][phone_number]['config'].location_time.shift(
-                minutes=+2) < arrow.now(tz='Europe/Warsaw'):
-            return
-
-        if event.sender.id not in inp:
-            await event.reply('You are not initialized')
-            return
-        if inp[event.sender.id][phone_number]['config'].location_time.shift(minutes=+2) > arrow.now(tz='Europe/Warsaw'):
-            msg = await event.get_reply_message()
-            msg = await msg.get_reply_message()
-            inp[event.sender.id][phone_number]['config'].location_time = arrow.now(tz='Europe/Warsaw')
-            inp[event.sender.id][phone_number]['config'].location = (event.message.geo.lat, event.message.geo.long)
-        else:
-            msg = await event.get_reply_message()
-
-        shipment_number = \
-            (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
-
-        try:
-            p: Parcel = await inp[event.sender.id][phone_number]['inpost'].get_parcel(shipment_number=shipment_number,
-                                                                                      parse=True)
-
-            match p.status:
-                case ParcelStatus.DELIVERED:
-                    await event.answer('Parcel already delivered!', alert=True)
-                case ParcelStatus.READY_TO_PICKUP:
-                    if (p.pickup_point.latitude - 0.0005 <= event.message.geo.lat <= p.pickup_point.latitude + 0.0005) \
-                            and \
-                            (
-                                    p.pickup_point.longitude - 0.0005 <= event.message.geo.long <= p.pickup_point.longitude + 0.0005):
-                        await event.reply('You are within the range, open?',
-                                          buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
-                    else:
-                        await event.reply(out_of_range_message_builder(parcel=p),
-                                          buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
-                case _:
-                    await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
-
-        except (NotAuthenticatedError, ParcelTypeError) as e:
-            logger.exception(e)
-            await event.reply(e.reason)
-        except UnauthorizedError as e:
-            logger.exception(e)
-            await event.reply('You are not authorized, initialize first!')
-        except NotFoundError:
-            await event.reply('Parcel not found')
-        except UnidentifiedAPIError as e:
-            logger.exception(e)
-            await event.reply('Unexpected error occurred, call admin')
-        except Exception as e:
-            logger.exception(e)
-            await event.reply('Bad things happened, call admin now!')
 
     @client.on(CallbackQuery(pattern=b'Yes!'))
     async def yes(event):
@@ -606,10 +552,16 @@ async def main(config, inp: Dict):
             await event.reply('No phone number provided!')
             return
 
-        msg = await event.get_message()
-        msg = await msg.get_reply_message()
-        msg = await msg.get_reply_message()
-        msg = await msg.get_reply_message()  # ffs gotta move 3 messages upwards
+        if inp[event.sender.id][phone_number]['config'].location_time_lock:
+            msg = await event.get_message()
+            msg = await msg.get_reply_message()
+            msg = await msg.get_reply_message()
+            inp[event.sender.id][phone_number]['config'].location_time_lock = False
+        else:
+            msg = await event.get_message()
+            msg = await msg.get_reply_message()
+            msg = await msg.get_reply_message()
+            msg = await msg.get_reply_message()  # ffs gotta move 3 messages upwards
 
         shipment_number = \
             (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
@@ -671,6 +623,9 @@ async def main(config, inp: Dict):
             await event.reply('You are not initialized')
 
         phone_number = await get_phone_number(inp, event)
+        if phone_number is None:
+            await event.reply('No phone number provided!')
+            return
 
         try:
             friend = await event.get_message()
