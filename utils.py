@@ -1,5 +1,6 @@
 from typing import List
 
+from arrow import arrow
 from inpost.static import Parcel, ParcelShipmentType, ParcelStatus
 from telethon import Button
 from telethon.events import NewMessage, CallbackQuery
@@ -8,12 +9,35 @@ from constants import multicompartment_message_builder, compartment_message_buil
     details_message_builder, open_comp_message_builder, ready_to_pickup_message_builder
 
 
+class BotUserConfig:
+    def __init__(self, **kwargs):
+        self.notifications: bool = kwargs['notifications']
+        self.default_parcel_machine: str = kwargs['default_parcel_machine']
+        self.geocheck: bool = kwargs['geocheck']
+        self.airquality: bool = kwargs['airquality']
+        self.location: tuple | None = kwargs['location'] if 'location' in kwargs else None  # lat, long
+        self.location_time: arrow | None = kwargs['location_time'] if 'location_time' in kwargs else None
+
+
 async def get_phone_number(inp: dict, event: NewMessage):
     if len(inp[event.sender.id]) == 1:
         return list(inp[event.sender.id])[0]
+
     elif inp[event.sender.id].default_phone_number and len(inp[event.sender.id]) != 1 and len(
             event.text.split(' ')) == 2:
         return inp[event.sender.id].default_phone_number
+
+    elif not inp[event.sender.id].default_phone_number and len(event.text.split(' ')) == 2:
+        if not len(event.text.split()[1].strip()) == 9:
+            await event.reply('Phone number is not 9 digit long')
+            return None
+
+        if not event.text.split()[1].strip().isdigit():
+            await event.reply('Phone number must contain only digits')
+            return None
+
+        return event.text.split()[1].strip()
+
     else:
         return await validate_number(event=event, phone_number=True)
 
@@ -59,6 +83,10 @@ async def validate_number(event: NewMessage, phone_number: bool) -> str | None:
 
 async def send_pcgs(event, inp, status):
     phone_number = await get_phone_number(inp, event)
+    if phone_number is None:
+        await event.reply('No phone number provided!')
+        return
+
     packages: List[Parcel] = await inp[event.sender.id][phone_number]['inpost'].get_parcels(status=status, parse=True)
     exclude = []
     if len(packages) > 0:
@@ -112,6 +140,10 @@ async def send_pcgs(event, inp, status):
 
 async def send_qrc(event, inp, shipment_number):
     phone_number = await get_phone_number(inp, event)
+    if phone_number is None:
+        await event.reply('No phone number provided!')
+        return
+
     p: Parcel = await inp[event.sender.id][phone_number]['inpost'].get_parcel(shipment_number=shipment_number,
                                                                               parse=True)
     if p.status == ParcelStatus.READY_TO_PICKUP:
@@ -122,6 +154,10 @@ async def send_qrc(event, inp, shipment_number):
 
 async def show_oc(event, inp, shipment_number):
     phone_number = await get_phone_number(inp, event)
+    if phone_number is None:
+        await event.reply('No phone number provided!')
+        return
+
     p: Parcel = await inp[event.sender.id][phone_number]['inpost'].get_parcel(shipment_number=shipment_number,
                                                                               parse=True)
     if p.status == ParcelStatus.READY_TO_PICKUP:
@@ -132,12 +168,20 @@ async def show_oc(event, inp, shipment_number):
 
 async def open_comp(event, inp, p: Parcel):
     phone_number = await get_phone_number(inp, event)
+    if phone_number is None:
+        await event.reply('No phone number provided!')
+        return
+
     await inp[event.sender.id][phone_number]['inpost'].collect(parcel_obj=p)
     await event.reply(open_comp_message_builder(parcel=p))
 
 
 async def send_details(event, inp, shipment_number):
     phone_number = await get_phone_number(inp, event)
+    if phone_number is None:
+        await event.reply('No phone number provided!')
+        return
+
     parcel: Parcel = await inp[event.sender.id][phone_number]['inpost'].get_parcel(shipment_number=shipment_number,
                                                                                    parse=True)
 
