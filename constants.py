@@ -34,7 +34,7 @@ def courier_message_builder(package: Parcel) -> str:
 
 
 def delivered_message_builder(package: Parcel) -> str:  # Duplicate just to be clear
-    return f'📤 **Sender:** `{package.sender.sender_name}`\n' \
+    return f'📤 **Sender:** `{package.sender.sender_name if package.sender is not None else None}`\n' \
            f'📦 **Shipment number:** `{package.shipment_number}`\n' \
            f'📮 **Status:** `{package.status.value}`\n'
 

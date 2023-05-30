@@ -623,9 +623,6 @@ async def main(config, inp: Dict):
             await event.reply('You are not initialized')
 
         phone_number = await get_phone_number(inp, event)
-        if phone_number is None:
-            await event.reply('No phone number provided!')
-            return
 
         try:
             friend = await event.get_message()
