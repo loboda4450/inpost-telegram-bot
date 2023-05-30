@@ -1,3 +1,5 @@
+import json
+import os
 from typing import List
 
 import arrow
@@ -78,9 +80,9 @@ async def confirm_location(event: NewMessage, inp: dict, phone_number, shipment_
 
 
 async def get_shipment_number(event: NewMessage):
-    if event.text.split(' ') == 2:
+    if len(event.text.split(' ')) == 2:
         return event.raw_text.split(' ')[1].strip()
-    elif event.text.split(' ') == 3:
+    elif len(event.text.split(' ')) == 3:
         return event.raw_text.split(' ')[2].strip()
     else:
         return None
@@ -118,7 +120,7 @@ async def validate_number(event: NewMessage, phone_number: bool) -> str | None:
 
 async def send_pcg(event: NewMessage, inp: dict, phone_number: int):
     package: Parcel = await inp[event.sender.id][phone_number]['inpost'].get_parcel(
-        shipment_number=(get_shipment_number(event)), parse=True)
+        shipment_number=(await get_shipment_number(event)), parse=True)
 
     if package.is_multicompartment:
         packages: List[Parcel] = await inp[event.sender.id][phone_number]['inpost'].get_multi_compartment(
@@ -134,6 +136,14 @@ async def send_pcg(event: NewMessage, inp: dict, phone_number: int):
         message = delivered_message_builder(package=package)
     else:
         message = compartment_message_builder(package=package)
+
+    to_log = await inp[event.sender.id][phone_number]['inpost'].get_parcel(
+        shipment_number=package.shipment_number, parse=False)
+    filename = f"parcel_logs/{event.sender.id}/{phone_number}/{package.shipment_number} {arrow.now('Europe/Warsaw').format('DD.MM.YYYY HH:mm:ss')}.json"
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+
+    with open(filename, "w") as f:
+        json.dump(to_log, f)
 
     match package.status:
         case ParcelStatus.READY_TO_PICKUP:
@@ -178,6 +188,14 @@ async def send_pcgs(event, inp, status, phone_number):
 
             if package.status in (ParcelStatus.STACK_IN_BOX_MACHINE, ParcelStatus.STACK_IN_CUSTOMER_SERVICE_POINT):
                 message = f'⚠️ **PARCEL IS IN SUBSTITUTIONARY PICK UP POINT!** ⚠\n️\n' + message
+
+            to_log = await inp[event.sender.id][phone_number]['inpost'].get_parcel(
+                    shipment_number=package.shipment_number, parse=False)
+            filename = f"parcel_logs/{event.sender.id}/{phone_number}/{package.shipment_number}/{arrow.now('Europe/Warsaw').format('DD.MM.YYYY HH:mm:ss')}.json"
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+
+            with open(filename, "w") as f:
+                json.dump(to_log, f)
 
             match package.status:
                 case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE | ParcelStatus.STACK_IN_CUSTOMER_SERVICE_POINT:
