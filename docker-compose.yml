@@ -6,6 +6,7 @@ services:
     volumes:
       - ./config.yml:/app/config.yml:ro
       - ./inpost.sqlite:/app/inpost.sqlite
+      - ./parcel_logs:/app/parcel_logs
     environment:
       - TZ=Europe/Warsaw
     restart: unless-stopped
