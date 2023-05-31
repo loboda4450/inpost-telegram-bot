@@ -533,7 +533,7 @@ async def main(config, inp: Dict):
             await event.reply('No phone number provided!')
             return
 
-        if inp[event.sender.id][phone_number]['config'].location_time < (arrow.now(tz='Europe/Warsaw').shift(min=+2)):
+        if inp[event.sender.id][phone_number]['config'].location_time < (arrow.now(tz='Europe/Warsaw').shift(minutes=+2)):
             await event.reply('Please share your location so I can check whether you are near parcel machine or not.',
                               buttons=[Button.request_location('Confirm localization')])
 
