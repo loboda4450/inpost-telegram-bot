@@ -85,7 +85,7 @@ async def send_pcgs(event, inp, status):
 
 async def send_qrc(event, inp, shipment_number):
     p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
-    if p.status == ParcelStatus.READY_TO_PICKUP:
+    if p.status == ParcelStatus.READY_TO_PICKUP or p.status == ParcelStatus.STACK_IN_BOX_MACHINE:
         await event.reply(file=p.generate_qr_image)
     else:
         await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
@@ -93,7 +93,7 @@ async def send_qrc(event, inp, shipment_number):
 
 async def show_oc(event, inp, shipment_number):
     p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
-    if p.status == ParcelStatus.READY_TO_PICKUP:
+    if p.status == ParcelStatus.READY_TO_PICKUP or p.status == ParcelStatus.STACK_IN_BOX_MACHINE:
         await event.answer(f'This parcel open code is: {p.open_code}', alert=True)
     else:
         await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
@@ -120,7 +120,7 @@ async def send_details(event, inp, shipment_number):
             events = "\n".join(
                 f'{status.date.to("local").format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in
                 p.event_log)
-            if p.status == ParcelStatus.READY_TO_PICKUP:
+            if p.status == ParcelStatus.READY_TO_PICKUP or p.status == ParcelStatus.STACK_IN_BOX_MACHINE:
                 message = message + f'**Shipment number**: {p.shipment_number}\n' \
                                     f'**Stored**: {p.stored_date.to("local").format("DD.MM.YYYY HH:mm")}\n' \
                                     f'**Open code**: {p.open_code}\n' \
@@ -137,7 +137,7 @@ async def send_details(event, inp, shipment_number):
         events = "\n".join(
             f'{status.date.to("local").format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in
             parcel.event_log)
-        if parcel.status == ParcelStatus.READY_TO_PICKUP:
+        if parcel.status == ParcelStatus.READY_TO_PICKUP or parcel.status == ParcelStatus.STACK_IN_BOX_MACHINE:
             await event.reply(f'**Stored**: {parcel.stored_date.to("local").format("DD.MM.YYYY HH:mm")}\n'
                               f'**Open code**: {parcel.open_code}\n'
                               f'**Events**:\n{events}'
@@ -314,7 +314,7 @@ async def main(config, inp: Dict):
                               f'{package.pickup_point.street} {package.pickup_point.building_number}`'
 
                 match package.status:
-                    case ParcelStatus.READY_TO_PICKUP:
+                    case (ParcelStatus.READY_TO_PICKUP, ParcelStatus.STACK_IN_BOX_MACHINE):
                         await event.reply(message,
                                           buttons=[
                                               [Button.inline('Open Code'), Button.inline('QR Code')],
@@ -359,7 +359,7 @@ async def main(config, inp: Dict):
                                       f'{package.pickup_point.street} {package.pickup_point.building_number}`'
 
                         match package.status:
-                            case ParcelStatus.READY_TO_PICKUP:
+                            case (ParcelStatus.READY_TO_PICKUP, ParcelStatus.STACK_IN_BOX_MACHINE):
                                 await event.reply(message,
                                                   buttons=[
                                                       [Button.inline('Open Code'), Button.inline('QR Code')],
@@ -650,7 +650,7 @@ async def main(config, inp: Dict):
             match p.status:
                 case ParcelStatus.DELIVERED:
                     await event.reply('Parcel already delivered!')
-                case ParcelStatus.READY_TO_PICKUP:
+                case (ParcelStatus.READY_TO_PICKUP, ParcelStatus.STACK_IN_BOX_MACHINE):
                     if (p.pickup_point.latitude - 0.0005 <= event.message.geo.lat <= p.pickup_point.latitude + 0.0005) \
                             and \
                             (
@@ -682,7 +682,7 @@ async def main(config, inp: Dict):
                     match p.status:
                         case ParcelStatus.DELIVERED:
                             await event.reply('Parcel already delivered!')
-                        case ParcelStatus.READY_TO_PICKUP:
+                        case (ParcelStatus.READY_TO_PICKUP, ParcelStatus.STACK_IN_BOX_MACHINE):
                             if (
                                     p.pickup_point.latitude - 0.0005 <= event.message.geo.lat <= p.pickup_point.latitude + 0.0005) \
                                     and \

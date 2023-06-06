@@ -1,4 +1,4 @@
 PyYAML~=6.0
 Telethon~=1.26.1
-inpost~=0.0.9
+inpost~=0.1.2
 pony~=0.7.16
