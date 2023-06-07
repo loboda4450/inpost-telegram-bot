@@ -257,11 +257,11 @@ async def main(config, inp: Dict):
             elif event.data == b'Delivered Parcels':
                 status = ParcelStatus.DELIVERED
         elif isinstance(event, NewMessage.Event):
-            if event.text == '/pending':
+            if '/pending' in event.text:
                 status = pending_statuses
-            elif event.text == '/delivered':
+            elif '/delivered' in event.text:
                 status = ParcelStatus.DELIVERED
-            elif event.text == '/all':
+            elif '/all' in event.text:
                 status = None
             else:
                 return
@@ -533,14 +533,14 @@ async def main(config, inp: Dict):
             await event.reply('No phone number provided!')
             return
 
-        if inp[event.sender.id][phone_number]['config'].location_time < (arrow.now(tz='Europe/Warsaw').shift(minutes=+2)):
+        if inp[event.sender.id][phone_number]['config'].location_time.shift(minutes=+2) < arrow.now(tz='Europe/Warsaw'):
             await event.reply('Please share your location so I can check whether you are near parcel machine or not.',
                               buttons=[Button.request_location('Confirm localization')])
-
-        inp[event.sender.id][phone_number]['config'].location_time_lock = True  # gotta do this in case someone would want to hit 'open compartment' button just on the edge, otherwise hitting 'yes' button could be davson-insensitive
-        await event.reply('Less than 2 minutes have passed since the last compartment opening, '
-                          'skipping location verification.\nAre you sure to open?',
-                          buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+        else:
+            inp[event.sender.id][phone_number]['config'].location_time_lock = True  # gotta do this in case someone would want to hit 'open compartment' button just on the edge, otherwise hitting 'yes' button could be davson-insensitive
+            await event.reply('Less than 2 minutes have passed since the last compartment opening, '
+                              'skipping location verification.\nAre you sure to open?',
+                              buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
 
     @client.on(CallbackQuery(pattern=b'Yes!'))
     async def yes(event):
