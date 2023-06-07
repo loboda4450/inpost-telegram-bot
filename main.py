@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import List, Dict
+from typing import Dict
 
 import arrow
 import yaml
@@ -9,14 +9,15 @@ from telethon import TelegramClient, Button
 from telethon.events import NewMessage, CallbackQuery
 
 import database
-from utils import validate_number, get_phone_number, send_pcgs, send_qrc, show_oc, open_comp, \
+from utils import get_phone_number, send_pcgs, send_qrc, show_oc, open_comp, \
     send_details, BotUserConfig, send_pcg, init_phone_number, confirm_location
 
 from inpost.static import ParcelStatus
 from inpost.static.exceptions import *
 from inpost.api import Inpost
 
-from constants import pending_statuses, welcome_message, friend_invitations_message_builder
+from constants import pending_statuses, welcome_message, friend_invitations_message_builder, \
+    out_of_range_message_builder, open_comp_message_builder
 
 
 async def reply(event: NewMessage.Event | CallbackQuery.Event, text: str, alert=True):
@@ -40,7 +41,7 @@ async def main(config, inp: Dict):
         for phone_number in users[user]:
             inp[user] = dict()
             inp[user][phone_number] = dict()
-            inp[user][phone_number]['inpost'] = Inpost()
+            inp[user][phone_number]['inpost'] = Inpost()  # TODO: default_phone_number field for user
             await inp[user][phone_number]['inpost'].set_phone_number(
                 users[user][phone_number]['phone_number'])  # must do it that way, logger has to be initialized
             inp[user][phone_number]['inpost'].sms_code = users[user][phone_number]['sms_code']
@@ -58,117 +59,127 @@ async def main(config, inp: Dict):
     await client.start(bot_token=config['bot_token'])
     print("Started")
 
+    @client.on(NewMessage(func=lambda e: e.text.startswith('/init') or e.message.contact is not None))
+    async def init_user(event):
+        async with client.conversation(event.sender.id) as convo:
+            phone_number = await init_phone_number(event=event)
+            if phone_number is None:
+                await convo.send_message('Something is wrong with provided phone number. Start initialization again.',
+                                         buttons=Button.clear())
+                convo.cancel()
+                return
+
+            if event.sender.id not in inp:
+                inp[event.sender.id] = dict()
+                database.add_user(event=event)
+
+            if phone_number in inp[event.sender.id]:
+                await convo.send_message('You have initialized this phone number before, cancelling!',
+                                         buttons=Button.clear())
+                convo.cancel()
+                return
+
+            inp[event.sender.id][phone_number] = dict()  # TODO: not saving more than one phone number
+            inp[event.sender.id][phone_number]['inpost'] = await Inpost.from_phone_number(phone_number=phone_number)
+            inp[event.sender.id][phone_number]['config'] = {'airquality': True,
+                                                            'default_parcel_machine': None,
+                                                            'geocheck': True,
+                                                            'notifications': True}
+
+            try:
+                if database.phone_number_exists(phone_number=phone_number):
+                    await convo.send_message('Phone number already exist!')
+                    return
+
+                database.add_phone_number_config(event=event, phone_number=phone_number)
+
+                if await inp[event.sender.id][phone_number]['inpost'].send_sms_code():
+                    await convo.send_message('Phone number accepted, send me sms code that InPost '
+                                             'sent to provided phone number! You have 60 seconds from now!')
+                    sms_code = await convo.get_response(timeout=60)
+
+                    if not (len(sms_code.text.strip()) == 6 and sms_code.text.isdigit()):
+                        await convo.send_message(
+                            'Something is wrong with provided sms code! Start initialization again.',
+                            buttons=Button.clear())
+                        return
+
+                    if await inp[event.sender.id][phone_number]['inpost'].confirm_sms_code(sms_code=sms_code.text.strip()):
+                        database.edit_phone_number_config(event=event,
+                                                          phone_number=phone_number,
+                                                          sms_code=sms_code.text.strip(),
+                                                          refr_token=inp[event.sender.id][phone_number][
+                                                              'inpost'].refr_token,
+                                                          auth_token=inp[event.sender.id][phone_number][
+                                                              'inpost'].auth_token)
+                        await convo.send_message(
+                            'Congrats, you have successfully verified yourself. Have fun using InPost '
+                            'services there!')
+
+                else:
+                    await convo.send_message('Something went wrong! Start initialization again.')
+                    return
+            except asyncio.TimeoutError as e:
+                logger.exception(e)
+                await convo.send_message('Time has ran out, start initialization again!')
+            except PhoneNumberError as e:
+                logger.exception(e)
+                await convo.send_message(e.reason)
+            except UnauthorizedError as e:
+                logger.exception(e)
+                await convo.send_message('You are not authorized')
+            except UnidentifiedAPIError as e:
+                logger.exception(e)
+                await convo.send_message('Unexpected error occurred, call admin')
+            except Exception as e:
+                logger.exception(e)
+                await convo.send_message('Bad things happened, call admin now!')
+            finally:
+                convo.cancel()  # no need to add convo cancellation in every case inside try statement
+
     @client.on(NewMessage(pattern='/start'))
     async def start(event):
         await event.reply(welcome_message, buttons=[Button.request_phone('Log in via Telegram')])
 
-    @client.on(NewMessage())
-    async def new_message_handler(event):
-        #  I know, that's bullshit, gotta figure out better solution
-        phone_number = await init_phone_number(event=event)
-        if phone_number is not None:
-            if event.sender.id not in inp:
-                database.add_user(event=event)
-            elif phone_number in inp[event.sender.id]:
-                await event.reply('You initialized this number before')
-                return
+    @client.on(NewMessage(func=lambda e: e.message.geo is not None))
+    async def geo_check_validation(event):
 
-            try:
-                inp[event.sender.id][phone_number]['inpost'] = Inpost()
-                inp[event.sender.id][phone_number]['config'] = {'airquality': True,
-                                                                'default_parcel_machine': None,
-                                                                'geocheck': True,
-                                                                'notifications': True}
+        if event.sender.id not in inp:
+            await event.reply('You are not initialized.', buttons=Button.clear())
+            return
 
-                await inp[event.sender.id][phone_number]['inpost'].set_phone_number(phone_number=phone_number)
-                if await inp[event.sender.id][phone_number]['inpost'].send_sms_code():
-                    database.add_phone_number_config(event=event, phone_number=phone_number)
-                    await event.reply(
-                        f'Initialized with phone number: {inp[event.sender.id][phone_number]["inpost"].phone_number}!'
-                        f'\nSending sms code!', buttons=Button.clear())
+        phone_number = await get_phone_number(inp, event)
+        if phone_number is None:
+            await event.reply('No phone number provided!', buttons=Button.clear())
+            return
 
-            except PhoneNumberError as e:
-                logger.exception(e)
-                await event.reply(e.reason)
-            except UnauthorizedError as e:
-                logger.exception(e)
-                await event.reply('You are not authorized')
-            except UnidentifiedAPIError as e:
-                logger.exception(e)
-                await event.reply('Unexpected error occurred, call admin')
-            except Exception as e:
-                logger.exception(e)
-                await event.reply('Bad things happened, call admin now!')
-        elif event.message.geo:  # validate location
-            phone_number = await get_phone_number(inp, event)
-            if phone_number is None:
-                await event.reply('No phone number provided!')
-                return
-
-            if event.sender.id not in inp:
-                await event.reply('You are not initialized')
-                return
-
+        async with client.conversation(event.sender.id) as convo:
             msg = await event.get_reply_message()
             msg = await msg.get_reply_message()
             inp[event.sender.id][phone_number]['config'].location_time = arrow.now(tz='Europe/Warsaw')
             inp[event.sender.id][phone_number]['config'].location = (event.message.geo.lat, event.message.geo.long)
-
             shipment_number = \
                 (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
 
             try:
                 await confirm_location(event=event, inp=inp, phone_number=phone_number, shipment_number=shipment_number)
-
-            except (NotAuthenticatedError, ParcelTypeError) as e:
+            except asyncio.TimeoutError as e:
                 logger.exception(e)
-                await event.reply(e.reason)
+                await convo.send_message('Time has ran out, please start opening compartment again!')
+            except PhoneNumberError as e:
+                logger.exception(e)
+                await convo.send_message(e.reason)
             except UnauthorizedError as e:
                 logger.exception(e)
-                await event.reply('You are not authorized, initialize first!')
-            except NotFoundError:
-                await event.reply('Parcel not found')
+                await convo.send_message('You are not authorized')
             except UnidentifiedAPIError as e:
                 logger.exception(e)
-                await event.reply('Unexpected error occurred, call admin')
+                await convo.send_message('Unexpected error occurred, call admin')
             except Exception as e:
                 logger.exception(e)
-                await event.reply('Bad things happened, call admin now!')
-        else:
-            return
-
-    @client.on(NewMessage(pattern='/confirm'))
-    async def confirm_sms(event):
-        if event.sender.id not in inp:
-            await event.reply('You are not initialized')
-            return
-
-        sms_code = await validate_number(event=event, phone_number=False)
-
-        try:
-            if await inp[event.sender.id][phone_number]['inpost'].confirm_sms_code(sms_code=sms_code):
-                database.edit_phone_number_config(event=event,
-                                                  sms_code=sms_code,
-                                                  refr_token=inp[event.sender.id][phone_number]['inpost'].refr_token,
-                                                  auth_token=inp[event.sender.id][phone_number]['inpost'].auth_token)
-
-                await event.reply(f'Succesfully verifed!', buttons=[Button.inline('Pending Parcels'),
-                                                                    Button.inline('Delivered Parcels')])
-            else:
-                await event.reply('Could not confirm sms code!')
-
-        except (PhoneNumberError, SmsCodeError) as e:
-            logger.exception(e)
-            await event.reply(e.reason)
-        except UnauthorizedError as e:
-            logger.exception(e)
-            await event.reply('You are not authorized, initialize first!')
-        except UnidentifiedAPIError as e:
-            logger.exception(e)
-            await event.reply('Unexpected error occurred, call admin')
-        except Exception as e:
-            logger.exception(e)
-            await event.reply('Bad things happened, call admin now!')
+                await convo.send_message('Bad things happened, call admin now!')
+            finally:
+                convo.cancel()  # no need to add convo cancellation in every case inside try statement
 
     @client.on(NewMessage(pattern='/clear'))
     async def clear(event):
@@ -527,68 +538,84 @@ async def main(config, inp: Dict):
     async def open_compartment(event):
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
+            return
 
         phone_number = await get_phone_number(inp, event)
         if phone_number is None:
             await event.reply('No phone number provided!')
             return
-
-        if inp[event.sender.id][phone_number]['config'].location_time.shift(minutes=+2) < arrow.now(tz='Europe/Warsaw'):
-            await event.reply('Please share your location so I can check whether you are near parcel machine or not.',
-                              buttons=[Button.request_location('Confirm localization')])
-        else:
-            inp[event.sender.id][phone_number]['config'].location_time_lock = True  # gotta do this in case someone would want to hit 'open compartment' button just on the edge, otherwise hitting 'yes' button could be davson-insensitive
-            await event.reply('Less than 2 minutes have passed since the last compartment opening, '
-                              'skipping location verification.\nAre you sure to open?',
-                              buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
-
-    @client.on(CallbackQuery(pattern=b'Yes!'))
-    async def yes(event):
-        if event.sender.id not in inp:
-            await event.reply('You are not initialized')
-
-        phone_number = await get_phone_number(inp, event)
-        if phone_number is None:
-            await event.reply('No phone number provided!')
-            return
-
-        if inp[event.sender.id][phone_number]['config'].location_time_lock:
-            msg = await event.get_message()
-            msg = await msg.get_reply_message()
-            msg = await msg.get_reply_message()
-            inp[event.sender.id][phone_number]['config'].location_time_lock = False
-        else:
-            msg = await event.get_message()
-            msg = await msg.get_reply_message()
-            msg = await msg.get_reply_message()
-            msg = await msg.get_reply_message()  # ffs gotta move 3 messages upwards
-
-        shipment_number = \
-            (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
-        p: Parcel = await inp[event.sender.id][phone_number]['inpost'].get_parcel(shipment_number=shipment_number,
-                                                                                  parse=True)
 
         try:
-            await open_comp(event, inp, p)
+            msg = await event.get_message()
+            shipment_number = \
+                (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
+            p: Parcel = await inp[event.sender.id][phone_number]['inpost'].get_parcel(shipment_number=shipment_number,
+                                                                                      parse=True)
 
-        except (NotAuthenticatedError, ParcelTypeError) as e:
+            async with client.conversation(event.sender.id) as convo:
+                if inp[event.sender.id][phone_number]['config'].location_time.shift(minutes=+2) < arrow.now(
+                        tz='Europe/Warsaw'):
+                    await convo.send_message(
+                        'Please share your location so I can check whether you are near parcel machine or not.',
+                        buttons=[Button.request_location('Confirm localization')])
+
+                    geo = await convo.get_response(timeout=30)
+                    if not geo.message.geo:
+                        await convo.send_message('Your message does not contain geolocation, start opening again!')
+                        return
+
+                    inp[event.sender.id][phone_number]['config'].location_time = arrow.now(tz='Europe/Warsaw')
+                    inp[event.sender.id][phone_number]['config'].location = (geo.message.geo.lat, geo.message.geo.long)
+
+                    status = await confirm_location(event=geo, inp=inp, parcel_obj=p)
+
+                    match status:
+                        case 'IN RANGE':
+                            await convo.send_message('You are in range. Are you sure to open?',
+                                                     buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+                        case 'OUT OF RANGE':
+                            await convo.send_message(out_of_range_message_builder(parcel=p),
+                                                     buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+                        case 'NOT READY':
+                            await convo.send_message(f'Parcel is not ready for pick up! Status: {p.status}')
+                        case 'DELIVERED':
+                            await convo.send_message('Parcel has been already delivered!')
+
+                else:
+                    inp[event.sender.id][phone_number][
+                        'config'].location_time_lock = True  # gotta do this in case someone would want to hit 'open compartment' button just on the edge, otherwise hitting 'yes' button could be davson-insensitive
+                    await convo.send_message('Less than 2 minutes have passed since the last compartment opening, '
+                                             'skipping location verification.\nAre you sure to open?',
+                                             buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+
+                decision = await convo.wait_event(event=CallbackQuery.Event, timeout=30)
+
+                match decision.data:
+                    case b'Yes!':
+                        await open_comp(event, inp, p)
+                        await convo.send_message(open_comp_message_builder(parcel=p), buttons=Button.clear())
+                    case b'Hell no!':
+                        await convo.send_message('Fine, compartment remains closed!', buttons=Button.clear())
+
+                return
+
+        except asyncio.TimeoutError as e:
             logger.exception(e)
-            await event.reply(e.reason)
+            await convo.send_message('Time has ran out, please start opening compartment again!')
+        except PhoneNumberError as e:
+            logger.exception(e)
+            await convo.send_message(e.reason)
         except UnauthorizedError as e:
             logger.exception(e)
-            await event.reply('You are not authorized, initialize first!')
-        except NotFoundError:
-            await event.reply('Parcel not found')
+            await convo.send_message('You are not authorized')
         except UnidentifiedAPIError as e:
             logger.exception(e)
-            await event.reply('Unexpected error occurred, call admin')
+            await convo.send_message('Unexpected error occurred, call admin')
         except Exception as e:
             logger.exception(e)
-            await event.reply('Bad things happened, call admin now!')
-
-    @client.on(CallbackQuery(pattern=b'Hell no!'))
-    async def no(event):
-        await event.reply('Fine, compartment remains closed!')
+            await convo.send_message('Bad things happened, call admin now!')
+        finally:
+            convo.cancel()  # no need to add convo cancellation in every case inside try statement
 
     @client.on(CallbackQuery(pattern=b'Details'))
     async def details(event):
