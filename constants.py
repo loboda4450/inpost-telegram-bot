@@ -16,7 +16,6 @@ welcome_message = 'Hello!\nThis is a bot helping you to manage your InPost parce
                   '**List of commands:**\n' \
                   '/start - display start message and allow user to login with Telegram\n' \
                   '/init - login using phone number `/init <phone_number>`\n' \
-                  '/confirm - confirm login with sms code `/confirm <sms_code>`\n' \
                   '/refresh - refresh authorization token\n' \
                   '/pending - return pending parcels\n' \
                   '/delivered - return delivered parcels\n' \
