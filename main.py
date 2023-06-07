@@ -314,7 +314,7 @@ async def main(config, inp: Dict):
                               f'{package.pickup_point.street} {package.pickup_point.building_number}`'
 
                 match package.status:
-                    case (ParcelStatus.READY_TO_PICKUP, ParcelStatus.STACK_IN_BOX_MACHINE):
+                    case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE:
                         await event.reply(message,
                                           buttons=[
                                               [Button.inline('Open Code'), Button.inline('QR Code')],
@@ -359,7 +359,7 @@ async def main(config, inp: Dict):
                                       f'{package.pickup_point.street} {package.pickup_point.building_number}`'
 
                         match package.status:
-                            case (ParcelStatus.READY_TO_PICKUP, ParcelStatus.STACK_IN_BOX_MACHINE):
+                            case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE:
                                 await event.reply(message,
                                                   buttons=[
                                                       [Button.inline('Open Code'), Button.inline('QR Code')],
@@ -650,7 +650,7 @@ async def main(config, inp: Dict):
             match p.status:
                 case ParcelStatus.DELIVERED:
                     await event.reply('Parcel already delivered!')
-                case (ParcelStatus.READY_TO_PICKUP, ParcelStatus.STACK_IN_BOX_MACHINE):
+                case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE:
                     if (p.pickup_point.latitude - 0.0005 <= event.message.geo.lat <= p.pickup_point.latitude + 0.0005) \
                             and \
                             (
@@ -682,12 +682,9 @@ async def main(config, inp: Dict):
                     match p.status:
                         case ParcelStatus.DELIVERED:
                             await event.reply('Parcel already delivered!')
-                        case (ParcelStatus.READY_TO_PICKUP, ParcelStatus.STACK_IN_BOX_MACHINE):
-                            if (
-                                    p.pickup_point.latitude - 0.0005 <= event.message.geo.lat <= p.pickup_point.latitude + 0.0005) \
-                                    and \
-                                    (
-                                            p.pickup_point.longitude - 0.0005 <= event.message.geo.long <= p.pickup_point.longitude + 0.0005):
+                        case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE:
+                            if (p.pickup_point.latitude - 0.0005 <= event.message.geo.lat <= p.pickup_point.latitude + 0.0005) \
+                                    and (p.pickup_point.longitude - 0.0005 <= event.message.geo.long <= p.pickup_point.longitude + 0.0005):
                                 await event.reply('Your location is within the range, should I open?',
                                                   buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
                             else:
