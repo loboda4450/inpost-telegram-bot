@@ -1,0 +1,8 @@
+/venv/
+inpost-bot.session
+inpost-refactor.sqlite
+inpost-server.sqlite
+inpost.sqlite
+config.yml
+.idea
+__pycache__
