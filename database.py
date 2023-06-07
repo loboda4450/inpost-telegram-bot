@@ -33,7 +33,13 @@ def add_user(event: NewMessage):
 
 
 @db_session
-def add_phone_number_config(event: NewMessage, phone_number: int | str, notifications: bool = True, geocheck: bool = True,
+def phone_number_exists(phone_number):
+    return PhoneNumberConfig.exists(phone_number=phone_number)
+
+
+@db_session
+def add_phone_number_config(event: NewMessage, phone_number: int | str, notifications: bool = True,
+                            geocheck: bool = True,
                             airquality: bool = True):
     if not User.exists(userid=event.sender.id):
         return
@@ -65,12 +71,15 @@ def edit_default_phone_number(event: NewMessage, default_phone_number: int | str
 
 
 @db_session
-def edit_phone_number_config(event: NewMessage, phone_number: int, sms_code: int | None = None,
+def edit_phone_number_config(event: NewMessage, phone_number: int | str, sms_code: int | None = None,
                              refr_token: str | None = None, auth_token: str | None = None,
                              notifications: bool | None = None, default_parcel_machine: str | None = None,
                              geocheck: bool | None = None, airquality: bool | None = None):
     if not User.exists(userid=event.sender.id):
         return
+
+    if isinstance(phone_number, str):
+        phone_number = int(phone_number)
 
     if not PhoneNumberConfig[phone_number]:
         return
