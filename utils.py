@@ -31,12 +31,11 @@ async def init_phone_number(event: NewMessage) -> str | None:
     elif len(event.text.split(' ')) == 2 and event.text.split()[1].strip().isdigit():
         return event.text.split()[1].strip()
     else:
-        await event.reply('Something is wrong with provided phone number')
         return None
 
 
 async def get_phone_number(inp: dict, event: NewMessage):
-    if len(inp[event.sender.id]) == 1:
+    if len(inp[event.sender.id]) == 1:  # TODO: verify if that method works properly
         return list(inp[event.sender.id])[0]
 
     elif inp[event.sender.id].default_phone_number and len(inp[event.sender.id]) != 1 and len(
@@ -58,25 +57,30 @@ async def get_phone_number(inp: dict, event: NewMessage):
         return await validate_number(event=event, phone_number=True)
 
 
-async def confirm_location(event: NewMessage, inp: dict, phone_number, shipment_number):
-    p: Parcel = await inp[event.sender.id][phone_number]['inpost'].get_parcel(shipment_number=shipment_number,
-                                                                              parse=True)
+async def confirm_location(event: NewMessage,
+                           inp: dict,
+                           phone_number: str | None,
+                           shipment_number: str | None,
+                           parcel_obj: Parcel | None) -> str | None:
+    if shipment_number and parcel_obj:
+        return
+
+    if shipment_number and parcel_obj is None:
+        p: Parcel = await inp[event.sender.id][phone_number]['inpost'].get_parcel(shipment_number=shipment_number, parse=True)
+
+    else:
+        p = parcel_obj
 
     match p.status:
         case ParcelStatus.DELIVERED:
-            await event.answer('Parcel already delivered!', alert=True)
+            return 'DELIVERED'
         case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE:
-            if (p.pickup_point.latitude - 0.0005 <= event.message.geo.lat <= p.pickup_point.latitude + 0.0005) \
-                    and \
-                    (
-                            p.pickup_point.longitude - 0.0005 <= event.message.geo.long <= p.pickup_point.longitude + 0.0005):
-                await event.reply('You are within the range, open?',
-                                  buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+            if (p.pickup_point.latitude - 0.0005 <= event.message.geo.lat <= p.pickup_point.latitude + 0.0005) and (p.pickup_point.longitude - 0.0005 <= event.message.geo.long <= p.pickup_point.longitude + 0.0005):
+                return 'IN RANGE'
             else:
-                await event.reply(out_of_range_message_builder(parcel=p),
-                                  buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+                return 'OUT OF RANGE'
         case _:
-            await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
+            return 'NOT READY'
 
 
 async def get_shipment_number(event: NewMessage):
@@ -253,7 +257,6 @@ async def open_comp(event, inp, p: Parcel):
         return
 
     await inp[event.sender.id][phone_number]['inpost'].collect(parcel_obj=p)
-    await event.reply(open_comp_message_builder(parcel=p))
 
 
 async def send_details(event, inp, shipment_number):
