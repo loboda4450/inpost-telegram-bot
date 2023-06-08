@@ -16,14 +16,21 @@ welcome_message = 'Hello!\nThis is a bot helping you to manage your InPost parce
                   '**List of commands:**\n' \
                   '/start - display start message and allow user to login with Telegram\n' \
                   '/init - login using phone number `/init <phone_number>`\n' \
-                  '/refresh - refresh authorization token\n' \
                   '/pending - return pending parcels\n' \
                   '/delivered - return delivered parcels\n' \
                   '/parcel - return parcel `/parcel <shipment_number>`\n' \
                   '/friends - list all known inpost friends \n' \
                   '/share <reply to parcel message> - share parcel to listed friend\n' \
                   '/all - return all available parcels\n' \
-                  '/clear - if you accidentally invoked `/start` and annoying box sprang up'
+                  '/clear - if you accidentally invoked `/start` and annoying box sprang up\n\n' \
+                  'Deprecated commands:\n' \
+                  '/refresh - refresh authorization token\n' \
+                  '/confirm <sms code> - confirm login with sms code ' \
+
+not_enough_parameters_provided = 'No phone number provided or no option selected!\n' \
+           'You can set your default phone number by sending `/set_default_phone_number <phone_number>` ' \
+           'or invoke this command by sending message following this template' \
+           '`/command <phone_number> <following part of command (e.g shipment number, On/Off)>`'
 
 
 def courier_message_builder(package: Parcel) -> str:
@@ -96,3 +103,9 @@ def friend_invitations_message_builder(friend) -> str:
            f'**Phone number**: {friend["friend"]["phoneNumber"]}\n' \
            f'**Invitation code**: `{friend["invitationCode"]}`\n' \
            f'**Expiry date**: {friend["expiryDate"]}'
+
+
+def use_command_as_reply_message_builder(command: str) -> str:
+    return f'Buttons works only with default phone number. ' \
+           f'Please set up one before using them or type following command and send it as a reply to desired parcel: ' \
+           f'\n`{command} <phone_number>'

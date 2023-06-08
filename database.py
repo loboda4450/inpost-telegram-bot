@@ -80,6 +80,23 @@ def edit_default_phone_number(event: NewMessage, default_phone_number: int | str
 
 
 @db_session
+def edit_default_parcel_machine(event: NewMessage, phone_number: int | str, default_parcel_machine: int | str):
+    if not User.exists(userid=event.sender.id):
+        return
+
+    if isinstance(phone_number, str):
+        phone_number = int(phone_number)
+
+    user = User.get(userid=event.sender.id)
+    if PhoneNumberConfig.exists(phone_number=phone_number) and PhoneNumberConfig[phone_number].user == user:
+        phone = PhoneNumberConfig.get_for_update(phone_number=phone_number)
+        phone.default_parcel_machine = default_parcel_machine
+        commit()
+
+    return
+
+
+@db_session
 def user_is_phone_number_owner(event: NewMessage):
     if not User.exists(userid=event.sender.id):
         return
