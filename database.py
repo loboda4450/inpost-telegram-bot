@@ -6,6 +6,7 @@ db = Database('sqlite', 'inpost.sqlite', create_db=True)
 
 class PhoneNumberConfig(db.Entity):
     user = Required('User')
+    default_to = Optional('User')
     phone_number = PrimaryKey(int)
     sms_code = Optional(int)
     refr_token = Optional(str)
@@ -19,7 +20,7 @@ class PhoneNumberConfig(db.Entity):
 
 class User(db.Entity):
     userid = PrimaryKey(int, size=64)
-    default_phone_number = Optional(int)
+    default_phone_number = Optional(PhoneNumberConfig, reverse='default_to')
     phone_numbers = Set(PhoneNumberConfig)
 
 
@@ -58,6 +59,11 @@ def add_phone_number_config(event: NewMessage, phone_number: int | str, notifica
 
 
 @db_session
+def get_default_phone_number(userid: str | int):
+    return User.get(userid=userid).default_phone_number
+
+
+@db_session
 def edit_default_phone_number(event: NewMessage, default_phone_number: int | str):
     if not User.exists(userid=event.sender.id):
         return
@@ -65,9 +71,20 @@ def edit_default_phone_number(event: NewMessage, default_phone_number: int | str
     if isinstance(default_phone_number, str):
         default_phone_number = int(default_phone_number)
 
-    User.get_for_update(userid=event.sender.id)
-    User.default_phone_number = default_phone_number
-    commit()
+    user = User.get_for_update(userid=event.sender.id)
+    if PhoneNumberConfig.exists(phone_number=default_phone_number) and PhoneNumberConfig[default_phone_number].user == user:
+        user.default_phone_number = default_phone_number
+        commit()
+
+    return
+
+
+@db_session
+def user_is_phone_number_owner(event: NewMessage):
+    if not User.exists(userid=event.sender.id):
+        return
+
+    return int(event.text.split()[1].strip()) in (pn.phone_number for pn in User[event.sender.id].phone_numbers)
 
 
 @db_session
