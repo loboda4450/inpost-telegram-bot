@@ -1,19 +1,21 @@
 import json
 import os
-from typing import List
+from typing import List, Dict
 
 import arrow
+from inpost import Inpost
 from inpost.static import Parcel, ParcelShipmentType, ParcelStatus
 from telethon import Button
 from telethon.events import NewMessage, CallbackQuery
 
+import database
 from constants import multicompartment_message_builder, compartment_message_builder, delivered_message_builder, \
-    details_message_builder, open_comp_message_builder, ready_to_pickup_message_builder, courier_message_builder, \
-    out_of_range_message_builder
+    details_message_builder, ready_to_pickup_message_builder
 
 
-class BotUserConfig:
+class BotUserPhoneNumberConfig:
     def __init__(self, **kwargs):
+        self.inpost: Inpost = Inpost.from_dict(kwargs['inpost']) if 'inpost' in kwargs else Inpost()
         self.notifications: bool = kwargs['notifications']
         self.default_parcel_machine: str = kwargs['default_parcel_machine']
         self.geocheck: bool = kwargs['geocheck']
@@ -21,6 +23,40 @@ class BotUserConfig:
         self.location: tuple | None = kwargs['location'] if 'location' in kwargs else None  # lat, long
         self.location_time: arrow.arrow | None = kwargs['location_time'] if 'location_time' in kwargs else None
         self.location_time_lock: bool = False
+
+
+class BotUserConfig:
+    def __init__(self, default_phone_number: int | str | None = None, phone_numbers: Dict | None = None):
+        self._default_phone_number = default_phone_number
+        self.phone_numbers: Dict | None = {pn: BotUserPhoneNumberConfig(
+            **{'inpost': {'phone_number': pn,
+                          'sms_code': phone_numbers[pn]['sms_code'],
+                          'auth_token': phone_numbers[pn]['auth_token'],
+                          'refr_token': phone_numbers[pn]['refr_token']
+                          },
+               'notifications': phone_numbers[pn]['notifications'],
+               'default_parcel_machine': phone_numbers[pn]['default_parcel_machine'],
+               'geocheck': phone_numbers[pn]['geocheck'],
+               'airquality': phone_numbers[pn]['airquality'],
+               'location': (0, 0),
+               'location_time': arrow.get(2023, 1, 1)}) for pn in phone_numbers} if phone_numbers is not None else None
+
+    def __getitem__(self, item):
+        return self.phone_numbers[int(item)]
+
+    # def __setitem__(self, key, value):
+    #     self.default_phone_number = value
+
+    def __contains__(self, item):
+        return item in self.phone_numbers
+
+    @property
+    def default_phone_number(self):
+        return self.phone_numbers[self._default_phone_number]
+
+    @default_phone_number.setter
+    def default_phone_number(self, value):
+        self._default_phone_number = value
 
 
 async def init_phone_number(event: NewMessage) -> str | None:
@@ -35,26 +71,17 @@ async def init_phone_number(event: NewMessage) -> str | None:
 
 
 async def get_phone_number(inp: dict, event: NewMessage):
-    if len(inp[event.sender.id]) == 1:  # TODO: verify if that method works properly
-        return list(inp[event.sender.id])[0]
-
-    elif inp[event.sender.id].default_phone_number and len(inp[event.sender.id]) != 1 and len(
-            event.text.split(' ')) == 2:
-        return inp[event.sender.id].default_phone_number
-
-    elif not inp[event.sender.id].default_phone_number and len(event.text.split(' ')) == 2:
-        if not len(event.text.split()[1].strip()) == 9:
-            await event.reply('Phone number is not 9 digit long')
+    if len(event.text.strip().split(' ')) == 2:
+        x: BotUserConfig = inp[event.sender.id]
+        return x.default_phone_number
+    elif len(event.text.strip().split(' ')) == 3:
+        pn = event.text.strip().split(' ')[1]
+        if len(pn) == 9 and pn.isdigit():
+            return pn
+        else:
             return None
-
-        if not event.text.split()[1].strip().isdigit():
-            await event.reply('Phone number must contain only digits')
-            return None
-
-        return event.text.split()[1].strip()
-
     else:
-        return await validate_number(event=event, phone_number=True)
+        return None
 
 
 async def confirm_location(event: NewMessage,
@@ -66,7 +93,8 @@ async def confirm_location(event: NewMessage,
         return
 
     if shipment_number and parcel_obj is None:
-        p: Parcel = await inp[event.sender.id][phone_number]['inpost'].get_parcel(shipment_number=shipment_number, parse=True)
+        p: Parcel = await inp[event.sender.id][phone_number].inpost.get_parcel(shipment_number=shipment_number,
+                                                                               parse=True)
 
     else:
         p = parcel_obj
@@ -75,7 +103,8 @@ async def confirm_location(event: NewMessage,
         case ParcelStatus.DELIVERED:
             return 'DELIVERED'
         case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE:
-            if (p.pickup_point.latitude - 0.0005 <= event.message.geo.lat <= p.pickup_point.latitude + 0.0005) and (p.pickup_point.longitude - 0.0005 <= event.message.geo.long <= p.pickup_point.longitude + 0.0005):
+            if (p.pickup_point.latitude - 0.0005 <= event.message.geo.lat <= p.pickup_point.latitude + 0.0005) and (
+                    p.pickup_point.longitude - 0.0005 <= event.message.geo.long <= p.pickup_point.longitude + 0.0005):
                 return 'IN RANGE'
             else:
                 return 'OUT OF RANGE'
@@ -92,42 +121,12 @@ async def get_shipment_number(event: NewMessage):
         return None
 
 
-async def validate_number(event: NewMessage, phone_number: bool) -> str | None:
-    if phone_number:
-        if len(event.text.split()) != 3:
-            await event.reply('Wrong message format')  # TODO: Format message
-            return None
-
-        if not len(event.text.split()[1].strip()) == 9:
-            await event.reply('Phone number is not 9 digit long')
-            return None
-
-        if not event.text.split()[1].strip().isdigit():
-            await event.reply('Phone number must contain only digits')
-            return None
-
-    else:
-        if not len(event.text.split()) == 2:
-            await event.reply('No SMS Code provided to make this operation')
-            return None
-
-        if not len(event.text.split()[1].strip()) == 6:
-            await event.reply('SMS code is not 6 digit long')
-            return None
-
-        if not event.text.split()[1].strip().isdigit():
-            await event.reply('SMS code must contain only digits')
-            return None
-
-    return event.text.split()[1].strip()
-
-
 async def send_pcg(event: NewMessage, inp: dict, phone_number: int):
-    package: Parcel = await inp[event.sender.id][phone_number]['inpost'].get_parcel(
+    package: Parcel = await inp[event.sender.id][phone_number].inpost.get_parcel(
         shipment_number=(await get_shipment_number(event)), parse=True)
 
     if package.is_multicompartment:
-        packages: List[Parcel] = await inp[event.sender.id][phone_number]['inpost'].get_multi_compartment(
+        packages: List[Parcel] = await inp[event.sender.id][phone_number].inpost.get_multi_compartment(
             multi_uuid=package.multi_compartment.uuid, parse=True)
         package = next((parcel for parcel in packages if parcel.is_main_multicompartment), None)
         other = '\n'.join(f'📤 **Sender:** `{p.sender.sender_name}`\n'
@@ -141,7 +140,7 @@ async def send_pcg(event: NewMessage, inp: dict, phone_number: int):
     else:
         message = compartment_message_builder(package=package)
 
-    to_log = await inp[event.sender.id][phone_number]['inpost'].get_parcel(
+    to_log = await inp[event.sender.id][phone_number].inpost.get_parcel(
         shipment_number=package.shipment_number, parse=False)
     filename = f"parcel_logs/{event.sender.id}/{phone_number}/{package.shipment_number} {arrow.now('Europe/Warsaw').format('DD.MM.YYYY HH:mm:ss')}.json"
     os.makedirs(os.path.dirname(filename), exist_ok=True)
@@ -163,7 +162,7 @@ async def send_pcg(event: NewMessage, inp: dict, phone_number: int):
 
 
 async def send_pcgs(event, inp, status, phone_number):
-    packages: List[Parcel] = await inp[event.sender.id][phone_number]['inpost'].get_parcels(status=status, parse=True)
+    packages: List[Parcel] = await inp[event.sender.id][phone_number].inpost.get_parcels(status=status, parse=True)
     exclude = []
     if len(packages) > 0:
         for package in packages:
@@ -175,7 +174,7 @@ async def send_pcgs(event, inp, status, phone_number):
                 continue
 
             elif package.is_main_multicompartment:
-                packages: List[Parcel] = await inp[event.sender.id][phone_number]['inpost'].get_multi_compartment(
+                packages: List[Parcel] = await inp[event.sender.id][phone_number].inpost.get_multi_compartment(
                     multi_uuid=package.multi_compartment.uuid, parse=True)
                 package = next((parcel for parcel in packages if parcel.is_main_multicompartment), None)
                 other = '\n'.join(f'📤 **Sender:** `{p.sender.sender_name}`\n'
@@ -193,8 +192,8 @@ async def send_pcgs(event, inp, status, phone_number):
             if package.status in (ParcelStatus.STACK_IN_BOX_MACHINE, ParcelStatus.STACK_IN_CUSTOMER_SERVICE_POINT):
                 message = f'⚠️ **PARCEL IS IN SUBSTITUTIONARY PICK UP POINT!** ⚠\n️\n' + message
 
-            to_log = await inp[event.sender.id][phone_number]['inpost'].get_parcel(
-                    shipment_number=package.shipment_number, parse=False)
+            to_log = await inp[event.sender.id][phone_number].inpost.get_parcel(
+                shipment_number=package.shipment_number, parse=False)
             filename = f"parcel_logs/{event.sender.id}/{phone_number}/{package.shipment_number}/{arrow.now('Europe/Warsaw').format('DD.MM.YYYY HH:mm:ss')}.json"
             os.makedirs(os.path.dirname(filename), exist_ok=True)
 
@@ -228,8 +227,8 @@ async def send_qrc(event, inp, shipment_number):
         await event.reply('No phone number provided!')
         return
 
-    p: Parcel = await inp[event.sender.id][phone_number]['inpost'].get_parcel(shipment_number=shipment_number,
-                                                                              parse=True)
+    p: Parcel = await inp[event.sender.id][phone_number].inpost.get_parcel(shipment_number=shipment_number,
+                                                                           parse=True)
     if p.status == ParcelStatus.READY_TO_PICKUP or p.status == ParcelStatus.STACK_IN_BOX_MACHINE:
         await event.reply(file=p.generate_qr_image)
     else:
@@ -242,8 +241,8 @@ async def show_oc(event, inp, shipment_number):
         await event.reply('No phone number provided!')
         return
 
-    p: Parcel = await inp[event.sender.id][phone_number]['inpost'].get_parcel(shipment_number=shipment_number,
-                                                                              parse=True)
+    p: Parcel = await inp[event.sender.id][phone_number].inpost.get_parcel(shipment_number=shipment_number,
+                                                                           parse=True)
     if p.status == ParcelStatus.READY_TO_PICKUP or p.status == ParcelStatus.STACK_IN_BOX_MACHINE:
         await event.answer(f'This parcel open code is: {p.open_code}', alert=True)
     else:
@@ -256,20 +255,24 @@ async def open_comp(event, inp, p: Parcel):
         await event.reply('No phone number provided!')
         return
 
-    await inp[event.sender.id][phone_number]['inpost'].collect(parcel_obj=p)
+    await inp[event.sender.id][phone_number].inpost.collect(parcel_obj=p)
 
 
-async def send_details(event, inp, shipment_number):
-    phone_number = await get_phone_number(inp, event)
+async def send_details(event, inp, shipment_number, phone_number=None):
     if phone_number is None:
-        await event.reply('No phone number provided!')
-        return
+        if inp[event.sender.id].default_phone_number is None:
+            await event.reply(f'Buttons works only with default phone number. '
+                              f'Please set up one before using them or type following command: '
+                              f'\n`/details <phone_number> {shipment_number}')
+            return
 
-    parcel: Parcel = await inp[event.sender.id][phone_number]['inpost'].get_parcel(shipment_number=shipment_number,
-                                                                                   parse=True)
+        phone_number = inp[event.sender.id].default_phone_number.inpost.phone_number
 
-    if parcel.is_multicompartment:
-        parcels = await inp[event.sender.id][phone_number]['inpost'].get_multi_compartment(
+    parcel: Parcel = await inp[event.sender.id][phone_number].inpost.get_parcel(shipment_number=shipment_number,
+                                                                                parse=True)
+
+    if parcel.is_multicompartment:  # TODO: Add airsensor data
+        parcels = await inp[event.sender.id][phone_number].inpost.get_multi_compartment(
             multi_uuid=parcel.multi_compartment.uuid, parse=True)
         message = ''
 
@@ -292,11 +295,19 @@ async def send_details(event, inp, shipment_number):
         events = "\n".join(
             f'{status.date.to("local").format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in
             parcel.event_log)
+        air_quality = None
+        if inp[event.sender.id][phone_number].airquality and parcel.pickup_point.air_sensor:
+            air_quality = f'Air quality: {parcel.pickup_point.air_sensor_data.air_quality}\n' \
+                          f'Temperature: {parcel.pickup_point.air_sensor_data.temperature}\n' \
+                          f'Humidity: {parcel.pickup_point.air_sensor_data.humidity}\n' \
+                          f'Pressure: {parcel.pickup_point.air_sensor_data.pressure}\n' \
+                          f'PM25: {parcel.pickup_point.air_sensor_data.pm25_value}, {parcel.pickup_point.air_sensor_data.pm25_percent}%\n' \
+                          f'Temperature: {parcel.pickup_point.air_sensor_data.pm10_value}, {parcel.pickup_point.air_sensor_data.pm10_percent}%\n'
+
         if parcel.status == ParcelStatus.READY_TO_PICKUP or parcel.status == ParcelStatus.STACK_IN_BOX_MACHINE:
-            await event.reply(ready_to_pickup_message_builder(parcel=parcel, events=events))
+            await event.reply(ready_to_pickup_message_builder(parcel=parcel, events=events, air_quality=air_quality))
         elif parcel.status == ParcelStatus.DELIVERED:
             await event.reply(f'**Picked up**: {parcel.pickup_date.to("local").format("DD.MM.YYYY HH:mm")}\n'
-                              f'**Events**:\n{events}'
-                              )
+                              f'**Events**:\n{events}')
         else:
             await event.reply(f'**Events**:\n{events}')
