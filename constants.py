@@ -70,10 +70,15 @@ def open_comp_message_builder(parcel: Parcel) -> str:
            f'Column: {parcel.compartment_location.column}'
 
 
-def ready_to_pickup_message_builder(parcel: Parcel, events: str) -> str:
-    return f'**Stored**: {parcel.stored_date.to("local").format("DD.MM.YYYY HH:mm")}\n' \
-           f'**Open code**: {parcel.open_code}\n' \
-           f'**Events**:\n{events}'
+def ready_to_pickup_message_builder(parcel: Parcel, events: str, air_quality: str | None) -> str:
+    msg = f'**Stored**: {parcel.stored_date.to("local").format("DD.MM.YYYY HH:mm")}\n' \
+          f'**Open code**: {parcel.open_code}\n' \
+          f'**Events**:\n{events}'
+
+    if air_quality:
+        msg = msg + air_quality
+
+    return msg
 
 
 def out_of_range_message_builder(parcel: Parcel) -> str:
