@@ -522,39 +522,45 @@ async def main(config, inp: Dict):
                                                                                       parse=True)
 
             async with client.conversation(event.sender.id) as convo:
-                if inp[event.sender.id][phone_number]['config'].location_time.shift(minutes=+2) < arrow.now(
-                        tz='Europe/Warsaw'):
-                    await convo.send_message(
-                        'Please share your location so I can check whether you are near parcel machine or not.',
-                        buttons=[Button.request_location('Confirm localization')])
+                if inp[event.sender.id][phone_number]['config']['geocheck']:
+                    if inp[event.sender.id][phone_number]['config'].location_time.shift(minutes=+2) < arrow.now(
+                            tz='Europe/Warsaw'):
+                        await convo.send_message(
+                            'Please share your location so I can check whether you are near parcel machine or not.',
+                            buttons=[Button.request_location('Confirm localization')])
 
-                    geo = await convo.get_response(timeout=30)
-                    if not geo.message.geo:
-                        await convo.send_message('Your message does not contain geolocation, start opening again!')
-                        return
+                        geo = await convo.get_response(timeout=30)
+                        if not geo.message.geo:
+                            await convo.send_message('Your message does not contain geolocation, start opening again!')
+                            return
 
-                    inp[event.sender.id][phone_number]['config'].location_time = arrow.now(tz='Europe/Warsaw')
-                    inp[event.sender.id][phone_number]['config'].location = (geo.message.geo.lat, geo.message.geo.long)
+                        inp[event.sender.id][phone_number]['config'].location_time = arrow.now(tz='Europe/Warsaw')
+                        inp[event.sender.id][phone_number]['config'].location = (geo.message.geo.lat, geo.message.geo.long)
 
-                    status = await confirm_location(event=geo, inp=inp, parcel_obj=p)
+                        status = await confirm_location(event=geo, inp=inp, parcel_obj=p)
 
-                    match status:
-                        case 'IN RANGE':
-                            await convo.send_message('You are in range. Are you sure to open?',
-                                                     buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
-                        case 'OUT OF RANGE':
-                            await convo.send_message(out_of_range_message_builder(parcel=p),
-                                                     buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
-                        case 'NOT READY':
-                            await convo.send_message(f'Parcel is not ready for pick up! Status: {p.status}')
-                        case 'DELIVERED':
-                            await convo.send_message('Parcel has been already delivered!')
+                        match status:
+                            case 'IN RANGE':
+                                await convo.send_message('You are in range. Are you sure to open?',
+                                                         buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+                            case 'OUT OF RANGE':
+                                await convo.send_message(out_of_range_message_builder(parcel=p),
+                                                         buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+                            case 'NOT READY':
+                                await convo.send_message(f'Parcel is not ready for pick up! Status: {p.status}')
+                            case 'DELIVERED':
+                                await convo.send_message('Parcel has been already delivered!')
 
+                    else:
+                        inp[event.sender.id][phone_number][
+                            'config'].location_time_lock = True  # gotta do this in case someone would want to hit 'open compartment' button just on the edge, otherwise hitting 'yes' button could be davson-insensitive
+                        await convo.send_message('Less than 2 minutes have passed since the last compartment opening, '
+                                                 'skipping location verification.\nAre you sure to open?',
+                                                 buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
                 else:
-                    inp[event.sender.id][phone_number][
-                        'config'].location_time_lock = True  # gotta do this in case someone would want to hit 'open compartment' button just on the edge, otherwise hitting 'yes' button could be davson-insensitive
-                    await convo.send_message('Less than 2 minutes have passed since the last compartment opening, '
-                                             'skipping location verification.\nAre you sure to open?',
+                    await convo.send_message(f'You have location checking off, skipping! '
+                                             f'You can turn it on by sending `/set_geocheck {phone_number} On`!\n\n'
+                                             f'Are you sure to open?',
                                              buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
 
                 decision = await convo.wait_event(event=CallbackQuery.Event, timeout=30)
@@ -613,7 +619,7 @@ async def main(config, inp: Dict):
             logger.exception(e)
             await event.reply('Bad things happened, call admin now!')
 
-    @client.on(CallbackQuery(pattern=b'Share'))
+    @client.on(CallbackQuery(pattern=b'Share'))  # TODO: Refactor to conversation
     async def share_parcel(event):
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
