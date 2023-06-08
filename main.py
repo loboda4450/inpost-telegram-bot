@@ -81,7 +81,7 @@ async def main(config, inp: Dict):
                     database.edit_default_phone_number(event=event, default_phone_number=phone_number)
                     inp[event.sender.id].default_phone_number = phone_number
 
-                if not await inp[event.sender.id][int(phone_number)].inpost.send_sms_code():
+                if not await inp[event.sender.id][phone_number].inpost.send_sms_code():
                     await convo.send_message('Could not send sms code! Start initializing again!',
                                              buttons=Button.clear())
                     return
@@ -97,7 +97,7 @@ async def main(config, inp: Dict):
                         buttons=Button.clear())
                     return
 
-                if not await inp[event.sender.id][int(phone_number)].inpost.confirm_sms_code(
+                if not await inp[event.sender.id][phone_number].inpost.confirm_sms_code(
                         sms_code=sms_code.text.strip()):
                     await convo.send_message('Something went wrong! Start initialization again.',
                                              buttons=Button.clear())
