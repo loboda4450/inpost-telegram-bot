@@ -38,10 +38,11 @@ async def main(config, inp: Dict):
 
     users = database.get_dict()
     for user in users:
+        inp[user] = dict()
         for phone_number in users[user]:
-            inp[user] = dict()
+            inp[user]['default_phone_number'] = database.get_default_phone_number(userid=user)
             inp[user][phone_number] = dict()
-            inp[user][phone_number]['inpost'] = Inpost()  # TODO: default_phone_number field for user
+            inp[user][phone_number]['inpost'] = Inpost()
             await inp[user][phone_number]['inpost'].set_phone_number(
                 users[user][phone_number]['phone_number'])  # must do it that way, logger has to be initialized
             inp[user][phone_number]['inpost'].sms_code = users[user][phone_number]['sms_code']
@@ -79,7 +80,7 @@ async def main(config, inp: Dict):
                 convo.cancel()
                 return
 
-            inp[event.sender.id][phone_number] = dict()  # TODO: not saving more than one phone number
+            inp[event.sender.id][phone_number] = dict()
             inp[event.sender.id][phone_number]['inpost'] = await Inpost.from_phone_number(phone_number=phone_number)
             inp[event.sender.id][phone_number]['config'] = {'airquality': True,
                                                             'default_parcel_machine': None,
@@ -93,32 +94,36 @@ async def main(config, inp: Dict):
 
                 database.add_phone_number_config(event=event, phone_number=phone_number)
 
-                if await inp[event.sender.id][phone_number]['inpost'].send_sms_code():
-                    await convo.send_message('Phone number accepted, send me sms code that InPost '
-                                             'sent to provided phone number! You have 60 seconds from now!')
-                    sms_code = await convo.get_response(timeout=60)
+                if not await inp[event.sender.id][phone_number]['inpost'].send_sms_code():
+                    await convo.send_message('Could not send sms code! Start initializing again!')
+                    return
 
-                    if not (len(sms_code.text.strip()) == 6 and sms_code.text.isdigit()):
-                        await convo.send_message(
-                            'Something is wrong with provided sms code! Start initialization again.',
-                            buttons=Button.clear())
-                        return
+                await convo.send_message('Phone number accepted, send me sms code that InPost '
+                                         'sent to provided phone number! You have 60 seconds from now!')
+                sms_code = await convo.get_response(timeout=60)
 
-                    if await inp[event.sender.id][phone_number]['inpost'].confirm_sms_code(sms_code=sms_code.text.strip()):
-                        database.edit_phone_number_config(event=event,
-                                                          phone_number=phone_number,
-                                                          sms_code=sms_code.text.strip(),
-                                                          refr_token=inp[event.sender.id][phone_number][
-                                                              'inpost'].refr_token,
-                                                          auth_token=inp[event.sender.id][phone_number][
-                                                              'inpost'].auth_token)
-                        await convo.send_message(
-                            'Congrats, you have successfully verified yourself. Have fun using InPost '
-                            'services there!')
+                if not (len(sms_code.text.strip()) == 6 and sms_code.text.isdigit()):
+                    await convo.send_message(
+                        'Something is wrong with provided sms code! Start initialization again.',
+                        buttons=Button.clear())
+                    return
 
-                else:
+                if not await inp[event.sender.id][phone_number]['inpost'].confirm_sms_code(
+                        sms_code=sms_code.text.strip()):
                     await convo.send_message('Something went wrong! Start initialization again.')
                     return
+
+                database.edit_phone_number_config(event=event,
+                                                  phone_number=phone_number,
+                                                  sms_code=sms_code.text.strip(),
+                                                  refr_token=inp[event.sender.id][phone_number][
+                                                      'inpost'].refr_token,
+                                                  auth_token=inp[event.sender.id][phone_number][
+                                                      'inpost'].auth_token)
+                await convo.send_message(
+                    'Congrats, you have successfully verified yourself. Have fun using InPost services there!')
+                return
+
             except asyncio.TimeoutError as e:
                 logger.exception(e)
                 await convo.send_message('Time has ran out, start initialization again!')
@@ -140,46 +145,6 @@ async def main(config, inp: Dict):
     @client.on(NewMessage(pattern='/start'))
     async def start(event):
         await event.reply(welcome_message, buttons=[Button.request_phone('Log in via Telegram')])
-
-    @client.on(NewMessage(func=lambda e: e.message.geo is not None))
-    async def geo_check_validation(event):
-
-        if event.sender.id not in inp:
-            await event.reply('You are not initialized.', buttons=Button.clear())
-            return
-
-        phone_number = await get_phone_number(inp, event)
-        if phone_number is None:
-            await event.reply('No phone number provided!', buttons=Button.clear())
-            return
-
-        async with client.conversation(event.sender.id) as convo:
-            msg = await event.get_reply_message()
-            msg = await msg.get_reply_message()
-            inp[event.sender.id][phone_number]['config'].location_time = arrow.now(tz='Europe/Warsaw')
-            inp[event.sender.id][phone_number]['config'].location = (event.message.geo.lat, event.message.geo.long)
-            shipment_number = \
-                (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
-
-            try:
-                await confirm_location(event=event, inp=inp, phone_number=phone_number, shipment_number=shipment_number)
-            except asyncio.TimeoutError as e:
-                logger.exception(e)
-                await convo.send_message('Time has ran out, please start opening compartment again!')
-            except PhoneNumberError as e:
-                logger.exception(e)
-                await convo.send_message(e.reason)
-            except UnauthorizedError as e:
-                logger.exception(e)
-                await convo.send_message('You are not authorized')
-            except UnidentifiedAPIError as e:
-                logger.exception(e)
-                await convo.send_message('Unexpected error occurred, call admin')
-            except Exception as e:
-                logger.exception(e)
-                await convo.send_message('Bad things happened, call admin now!')
-            finally:
-                convo.cancel()  # no need to add convo cancellation in every case inside try statement
 
     @client.on(NewMessage(pattern='/clear'))
     async def clear(event):
@@ -382,13 +347,17 @@ async def main(config, inp: Dict):
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
 
-        phone_number = await get_phone_number(inp, event)
+        phone_number = event.text.split()[1].strip()
         if phone_number is None:
             await event.reply('No phone number provided!')
             return
 
+        if not database.user_is_phone_number_owner(event=event):
+            await event.reply(f'You are not the owner of {phone_number}')
+            return
+
         database.edit_default_phone_number(event=event, default_phone_number=phone_number)
-        inp[event.sender.id][phone_number]['config'].default_phone_number = phone_number
+        inp[event.sender.id]['default_phone_number'] = phone_number
         await event.reply('Default phone number is set!')
 
     @client.on(NewMessage(pattern='/set_geocheck'))
