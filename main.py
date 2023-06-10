@@ -13,7 +13,6 @@ import database
 from constants import pending_statuses, welcome_message, friend_invitations_message_builder, \
     out_of_range_message_builder, open_comp_message_builder, use_command_as_reply_message_builder, \
     not_enough_parameters_provided
-
 from utils import get_shipment_and_phone_number_from_button, send_pcgs, send_qrc, show_oc, open_comp, \
     send_details, BotUserPhoneNumberConfig, BotUserConfig, send_pcg, init_phone_number, confirm_location, \
     get_shipment_and_phone_number_from_reply
@@ -571,7 +570,7 @@ async def main(config, inp: Dict):
                                              f'Are you sure to open?',
                                              buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
 
-                decision = await convo.wait_event(event=CallbackQuery.Event, timeout=30)
+                decision = await convo.wait_event(event=CallbackQuery(), timeout=30)
 
                 match decision.data:
                     case b'Yes!':
@@ -579,6 +578,9 @@ async def main(config, inp: Dict):
                         await convo.send_message(open_comp_message_builder(parcel=p), buttons=Button.clear())
                     case b'Hell no!':
                         await convo.send_message('Fine, compartment remains closed!', buttons=Button.clear())
+                    case _:
+                        await convo.send_message('Unrecognizable decision made, please start opening compartment '
+                                                 'again!')
 
                 return
 
@@ -694,8 +696,9 @@ async def main(config, inp: Dict):
                                              buttons=[Button.inline('Dispatch')])
                 if isinstance(event, CallbackQuery.Event):
                     await convo.send_message('Fine, now pick a friend to share parcel to and press `Dispatch` button')
-                    friend = await convo.wait_event(CallbackQuery.Event, timeout=30)
+                    friend = await convo.wait_event(CallbackQuery(pattern='Dispatch'), timeout=30)
                     friend = await friend.get_message()
+
                 elif isinstance(event, NewMessage.Event):
                     await convo.send_message('Fine, now pick a friend to share parcel to and '
                                              'send a reply to him/her with `/dispatch`')
@@ -709,9 +712,9 @@ async def main(config, inp: Dict):
                     next((f for f in friends['friends'] if (f.name == friend[0] and f.phone_number == friend[1])))).uuid
                 if await inp[event.sender.id][int(phone_number)].inpost.share_parcel(uuid=uuid,
                                                                                      shipment_number=shipment_number):
-                    await event.reply('Parcel shared!')
+                    await convo.send_message('Parcel shared!')
                 else:
-                    await event.reply('Not shared!')
+                    await convo.send_message('Not shared, try again!')
 
             except asyncio.TimeoutError as e:
                 logger.exception(e)
