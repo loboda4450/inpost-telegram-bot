@@ -430,7 +430,7 @@ async def main(config, inp: Dict):
             return
 
         try:
-            await send_qrc(event, inp, shipment_number)
+            await send_qrc(event, inp, phone_number, shipment_number)
 
         except (NotAuthenticatedError, ParcelTypeError) as e:
             logger.exception(e)
@@ -474,13 +474,14 @@ async def main(config, inp: Dict):
             case _:
                 logger.warning('Obtained other type of event than expected')
                 await event.reply('Bad things happened, call admin now!')
+                return
 
         if shipment_number is None:
             await event.reply('No shipment number!')
             return
 
         try:
-            await show_oc(event, inp, shipment_number)
+            await show_oc(event, inp, phone_number, shipment_number)
         except (NotAuthenticatedError, ParcelTypeError) as e:
             logger.exception(e)
             await event.reply(e.reason)
@@ -574,7 +575,7 @@ async def main(config, inp: Dict):
 
                 match decision.data:
                     case b'Yes!':
-                        await open_comp(event, inp, p)
+                        await open_comp(event, inp, phone_number, p)
                         await convo.send_message(open_comp_message_builder(parcel=p), buttons=Button.clear())
                     case b'Hell no!':
                         await convo.send_message('Fine, compartment remains closed!', buttons=Button.clear())

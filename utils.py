@@ -235,12 +235,7 @@ async def send_pcgs(event, inp, status, phone_number):
     return status
 
 
-async def send_qrc(event, inp, shipment_number):
-    phone_number = await get_phone_number(inp, event)
-    if phone_number is None:
-        await event.reply('No phone number provided!')
-        return
-
+async def send_qrc(event, inp, phone_number, shipment_number):
     p: Parcel = await inp[event.sender.id][phone_number].inpost.get_parcel(shipment_number=shipment_number,
                                                                            parse=True)
     if p.status == ParcelStatus.READY_TO_PICKUP or p.status == ParcelStatus.STACK_IN_BOX_MACHINE:
@@ -249,12 +244,7 @@ async def send_qrc(event, inp, shipment_number):
         await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
 
 
-async def show_oc(event, inp, shipment_number):
-    phone_number = await get_phone_number(inp, event)
-    if phone_number is None:
-        await event.reply('No phone number provided!')
-        return
-
+async def show_oc(event, inp, phone_number, shipment_number):
     p: Parcel = await inp[event.sender.id][phone_number].inpost.get_parcel(shipment_number=shipment_number,
                                                                            parse=True)
     if p.status == ParcelStatus.READY_TO_PICKUP or p.status == ParcelStatus.STACK_IN_BOX_MACHINE:
@@ -263,13 +253,8 @@ async def show_oc(event, inp, shipment_number):
         await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
 
 
-async def open_comp(event, inp, p: Parcel):
-    phone_number = await get_phone_number(inp, event)
-    if phone_number is None:
-        await event.reply('No phone number provided!')
-        return
-
-    await inp[event.sender.id][phone_number].inpost.collect(parcel_obj=p)
+async def open_comp(event, inp, phone_number, p: Parcel):
+    return await inp[event.sender.id][phone_number].inpost.collect(parcel_obj=p)
 
 
 async def send_details(event, inp, shipment_number, phone_number=None):
