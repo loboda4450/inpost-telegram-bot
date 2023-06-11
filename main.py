@@ -42,7 +42,8 @@ async def main(config, inp: Dict):
     await client.start(bot_token=config['bot_token'])
     print("Started")
 
-    @client.on(NewMessage(func=lambda e: e.text.startswith('/init') or e.message.contact is not None))
+    @client.on(NewMessage(func=lambda e: e.text.startswith(
+        '/init') or e.message.contact is not None))  # TODO: add phone number reinitialization
     async def init_user(event):
         async with client.conversation(event.sender.id) as convo:
             phone_number = await init_phone_number(event=event)
@@ -62,19 +63,19 @@ async def main(config, inp: Dict):
                 convo.cancel()
                 return
 
-            inp[event.sender.id].phone_numbers.update({phone_number: BotUserPhoneNumberConfig(**{
-                'airquality': True,
-                'default_parcel_machine': None,
-                'geocheck': True,
-                'notifications': True})})
-            inp[event.sender.id][phone_number].inpost.set_phone_number(phone_number=phone_number)
-
             try:
                 if database.phone_number_exists(phone_number=phone_number):
                     await convo.send_message('Phone number already exist!', buttons=Button.clear())
                     return
 
                 database.add_phone_number_config(event=event, phone_number=phone_number)
+
+                inp[event.sender.id].phone_numbers.update({phone_number: BotUserPhoneNumberConfig(**{
+                    'airquality': True,
+                    'default_parcel_machine': None,
+                    'geocheck': True,
+                    'notifications': True})})
+                inp[event.sender.id][phone_number].inpost.set_phone_number(phone_number=phone_number)
 
                 if len(inp[event.sender.id].phone_numbers) == 1:
                     database.edit_default_phone_number(event=event, default_phone_number=phone_number)
@@ -147,9 +148,9 @@ async def main(config, inp: Dict):
 
         match len(event.text.strip().split(' ')):
             case 2:
-                phone_number = inp[event.sender.id].default_phone_number.inpost.phone_number
+                phone_number = inp[event.sender.id].default_phone_number.phone_number
             case 3:
-                phone_number = inp[event.sender.id][event.text.strip().split(' ')[1]].inpost.phone_number
+                phone_number = inp[event.sender.id][event.text.strip().split(' ')[1].strip()].inpost.phone_number
             case _:
                 await event.reply(not_enough_parameters_provided)
                 return
@@ -184,39 +185,47 @@ async def main(config, inp: Dict):
             return
 
         status = None
-        if isinstance(event, CallbackQuery.Event):
-            if event.data == b'Pending Parcels':
-                status = pending_statuses
-            elif event.data == b'Delivered Parcels':
-                status = ParcelStatus.DELIVERED
 
-            phone_number = inp[event.sender.id].default_phone_number.inpost.phone_number
-            if phone_number is None:
-                await event.reply(f'Buttons works only with default phone number. '
-                                  f'Please set up one before using them or type following command: '
-                                  f'\n`/command <phone_number> <rest of needed params>')
-                return
+        match event:
+            case CallbackQuery.Event():
+                if event.data == b'Pending Parcels':
+                    status = pending_statuses
+                elif event.data == b'Delivered Parcels':
+                    status = ParcelStatus.DELIVERED
 
-        elif isinstance(event, NewMessage.Event):
-            if '/pending' in event.text:
-                status = pending_statuses
-            elif '/delivered' in event.text:
-                status = ParcelStatus.DELIVERED
-            elif '/all' in event.text:
-                status = None
-            else:
-                return
+                phone_number = inp[event.sender.id].default_phone_number.phone_number
+                if phone_number is None:
+                    await event.reply(f'Buttons works only with default phone number. '
+                                      f'Please set up one before using them or type following command: '
+                                      f'\n`/command <phone_number> <rest of needed params>')
+                    return
+            case NewMessage.Event():
+                if '/pending' in event.text:
+                    status = pending_statuses
+                elif '/delivered' in event.text:
+                    status = ParcelStatus.DELIVERED
+                elif '/all' in event.text:
+                    status = None
+                else:
+                    return
 
-            if len(event.text.strip().split(' ')) == 1:
-                phone_number = inp[event.sender.id].default_phone_number.inpost.phone_number
-            elif len(event.text.strip().split(' ')) == 2:
-                phone_number = inp[event.sender.id][event.text.strip().split(' ')[1]].inpost.phone_number
-            else:
-                await event.reply('Something is wrong with phone number!')
-                return
+                match len(event.text.strip().split(' ')):
+                    case 1:
+                        phone_number = inp[event.sender.id].default_phone_number.phone_number
+                    case 2:
+                        phone_number = inp[event.sender.id][
+                            event.text.strip().split(' ')[1].strip()].inpost.phone_number
+                    case _:
+                        await event.reply(not_enough_parameters_provided)
+                        return
 
-            if phone_number is None:
-                await event.reply('This phone number does not exist or does not belong to you!')
+                if phone_number is None:
+                    await event.reply('This phone number does not exist or does not belong to you!')
+                    return
+
+            case _:
+                logger.warning('Obtained other type of event than expected')
+                await event.reply('Bad things happened, call admin now!')
                 return
 
         try:
@@ -246,9 +255,9 @@ async def main(config, inp: Dict):
         async with client.conversation(event.sender.id) as convo:
             match len(event.text.strip().split(' ')):
                 case 1:
-                    phone_number = inp[event.sender.id].default_phone_number.inpost.phone_number
+                    phone_number = inp[event.sender.id].default_phone_number.phone_number
                 case 2:
-                    phone_number = inp[event.sender.id][event.text.strip().split(' ')[1]].inpost.phone_number
+                    phone_number = inp[event.sender.id][event.text.strip().split(' ')[1].strip()].inpost.phone_number
                 case _:
                     await event.reply(not_enough_parameters_provided)
                     return
@@ -294,10 +303,10 @@ async def main(config, inp: Dict):
                     await event.reply("Provided phone number contains non digit characters or is not 9 digits long")
                     return
 
-                phone_number = msg[1].strip()
+                phone_number = int(msg[1].strip())
                 database.edit_default_phone_number(event=event, default_phone_number=phone_number)
                 inp[event.sender.id].default_phone_number = phone_number
-                await event.reply('Default phone number is set!')
+                await event.reply(f'Default phone number is set to {phone_number}!')
             case _:
                 await event.reply(not_enough_parameters_provided)
                 return
@@ -311,10 +320,10 @@ async def main(config, inp: Dict):
 
         match len(msg):
             case 2:
-                phone_number = inp[event.sender.id].default_phone_number.inpost.phone_number
+                phone_number = inp[event.sender.id].default_phone_number.phone_number
                 default_parcel_machine = msg[1].strip().upper()
             case 3:
-                phone_number = inp[event.sender.id][event.text.strip().split(' ')[1]].inpost.phone_number
+                phone_number = inp[event.sender.id][event.text.strip().split(' ')[1].strip()].inpost.phone_number
                 default_parcel_machine = msg[2].strip().upper()
             case _:
                 await event.reply(not_enough_parameters_provided)
@@ -323,7 +332,7 @@ async def main(config, inp: Dict):
         database.edit_default_parcel_machine(event=event, phone_number=phone_number,
                                              default_parcel_machine=default_parcel_machine)
         inp[event.sender.id][int(phone_number)].default_parcel_machine = default_parcel_machine
-        await event.reply('Default parcel machine is set!')
+        await event.reply(f'Default parcel machine is set to {default_parcel_machine}!')
 
     @client.on(NewMessage(pattern='/set_geocheck'))
     async def set_geocheck(event):
@@ -334,10 +343,10 @@ async def main(config, inp: Dict):
 
         match len(msg):
             case 2:
-                phone_number = inp[event.sender.id].default_phone_number.inpost.phone_number
+                phone_number = inp[event.sender.id].default_phone_number.phone_number
                 geocheck = True if msg[1].strip().lower() == 'on' else False
             case 3:
-                phone_number = inp[event.sender.id][event.text.strip().split(' ')[1]].inpost.phone_number
+                phone_number = inp[event.sender.id][event.text.strip().split(' ')[1].strip()].inpost.phone_number
                 geocheck = True if msg[2].strip().lower() == 'on' else False
             case _:
                 await event.reply(not_enough_parameters_provided)
@@ -358,10 +367,10 @@ async def main(config, inp: Dict):
 
         match len(msg):
             case 2:
-                phone_number = inp[event.sender.id].default_phone_number.inpost.phone_number
+                phone_number = inp[event.sender.id].default_phone_number.phone_number
                 airquality = True if msg[1].strip().lower() == 'on' else False
             case 3:
-                phone_number = inp[event.sender.id][event.text.strip().split(' ')[1]].inpost.phone_number
+                phone_number = inp[event.sender.id][event.text.strip().split(' ')[1].strip()].inpost.phone_number
                 airquality = True if msg[2].strip().lower() == 'on' else False
             case _:
                 await event.reply(not_enough_parameters_provided)
@@ -378,15 +387,15 @@ async def main(config, inp: Dict):
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
 
-        msg = event.text.strip().split(' ')
+        msg = event.text.strip().split(' ')[1].strip()
 
-        match len(msg):
+        match len(event.text.strip().split(' ')):
             case 2:
-                phone_number = inp[event.sender.id].default_phone_number.inpost.phone_number
-                notifications = True if msg[1].strip().lower() == 'on' else False
+                phone_number = inp[event.sender.id].default_phone_number.phone_number
+                notifications = True if msg.lower() == 'on' else False
             case 3:
-                phone_number = inp[event.sender.id][int(event.text.strip().split(' ')[1])].inpost.phone_number
-                notifications = True if msg[2].strip().lower() == 'on' else False
+                phone_number = inp[event.sender.id][int(event.text.strip().split(' ')[1].strip())].inpost.phone_number
+                notifications = True if msg.lower() == 'on' else False
             case _:
                 await event.reply(not_enough_parameters_provided)
                 return
@@ -395,7 +404,7 @@ async def main(config, inp: Dict):
                                           phone_number=phone_number,
                                           notifications=notifications)
         inp[event.sender.id][int(phone_number)].notifications = notifications
-        await event.reply('Notifications are set!')
+        await event.reply(f'Notifications are set to {msg.upper()}!')
 
     @client.on(NewMessage(pattern='/qrcode'))
     @client.on(CallbackQuery(pattern=b'QR Code'))
@@ -420,10 +429,12 @@ async def main(config, inp: Dict):
                 if inp[event.sender.id].default_phone_number is None:
                     await event.reply(use_command_as_reply_message_builder("/qrcode"))
                     return
+
                 shipment_number, phone_number = await get_shipment_and_phone_number_from_button(event, inp)
             case _:
                 logger.warning('Obtained other type of event than expected')
                 await event.reply('Bad things happened, call admin now!')
+                return
 
         if shipment_number is None:
             await event.reply('No shipment number!')
@@ -521,16 +532,16 @@ async def main(config, inp: Dict):
                 return
 
         try:
-            p: Parcel = await inp[event.sender.id][int(phone_number)].inpost.get_parcel(shipment_number=shipment_number,
-                                                                                        parse=True)
+            p: Parcel = await inp[event.sender.id][phone_number].inpost.get_parcel(shipment_number=shipment_number,
+                                                                                   parse=True)
 
             if p.status == ParcelStatus.DELIVERED:
                 await event.reply('Parcel already delivered!')
                 return
 
             async with client.conversation(event.sender.id) as convo:
-                if inp[event.sender.id][int(phone_number)].geocheck:
-                    if inp[event.sender.id][int(phone_number)].location_time.shift(minutes=+2) < arrow.now(
+                if inp[event.sender.id][phone_number].geocheck:
+                    if inp[event.sender.id][phone_number].location_time.shift(minutes=+2) < arrow.now(
                             tz='Europe/Warsaw'):
                         await convo.send_message(
                             'Please share your location so I can check whether you are near parcel machine or not.',
@@ -541,9 +552,8 @@ async def main(config, inp: Dict):
                             await convo.send_message('Your message does not contain geolocation, start opening again!')
                             return
 
-                        inp[event.sender.id][int(phone_number)].location_time = arrow.now(tz='Europe/Warsaw')
-                        inp[event.sender.id][int(phone_number)].location = (
-                            geo.message.geo.lat, geo.message.geo.long)
+                        inp[event.sender.id][phone_number].location_time = arrow.now(tz='Europe/Warsaw')
+                        inp[event.sender.id][phone_number].location = (geo.message.geo.lat, geo.message.geo.long)
 
                         status = await confirm_location(event=geo, inp=inp, parcel_obj=p)
 
@@ -560,7 +570,7 @@ async def main(config, inp: Dict):
                                 await convo.send_message('Parcel has been already delivered!')
 
                     else:
-                        inp[event.sender.id][int(phone_number)][
+                        inp[event.sender.id][phone_number][
                             'config'].location_time_lock = True  # gotta do this in case someone would want to hit 'open compartment' button just on the edge, otherwise hitting 'yes' button could be davson-insensitive
                         await convo.send_message('Less than 2 minutes have passed since the last compartment opening, '
                                                  'skipping location verification.\nAre you sure to open?',
@@ -625,6 +635,7 @@ async def main(config, inp: Dict):
                 if inp[event.sender.id].default_phone_number is None:
                     await event.reply(use_command_as_reply_message_builder("/details"))
                     return
+
                 shipment_number, phone_number = await get_shipment_and_phone_number_from_button(event, inp)
             case _:
                 logger.warning('Obtained other type of event than expected')
@@ -676,6 +687,7 @@ async def main(config, inp: Dict):
                 if inp[event.sender.id].default_phone_number is None:
                     await event.reply(use_command_as_reply_message_builder("/share"))
                     return
+
                 shipment_number, phone_number = await get_shipment_and_phone_number_from_button(event, inp)
             case _:
                 logger.warning('Obtained other type of event than expected')
@@ -688,7 +700,7 @@ async def main(config, inp: Dict):
 
         async with client.conversation(event.sender.id) as convo:
             try:
-                friends = await inp[event.sender.id][int(phone_number)].inpost.get_parcel_friends(
+                friends = await inp[event.sender.id][phone_number].inpost.get_parcel_friends(
                     shipment_number=shipment_number, parse=True)
 
                 for f in friends['friends']:
@@ -711,8 +723,8 @@ async def main(config, inp: Dict):
 
                 uuid = (
                     next((f for f in friends['friends'] if (f.name == friend[0] and f.phone_number == friend[1])))).uuid
-                if await inp[event.sender.id][int(phone_number)].inpost.share_parcel(uuid=uuid,
-                                                                                     shipment_number=shipment_number):
+                if await inp[event.sender.id][phone_number].inpost.share_parcel(uuid=uuid,
+                                                                                shipment_number=shipment_number):
                     await convo.send_message('Parcel shared!')
                 else:
                     await convo.send_message('Not shared, try again!')

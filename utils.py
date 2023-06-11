@@ -23,6 +23,10 @@ class BotUserPhoneNumberConfig:
         self.location_time: arrow.arrow | None = kwargs['location_time'] if 'location_time' in kwargs else None
         self.location_time_lock: bool = False
 
+    @property
+    def phone_number(self):
+        return self.inpost.phone_number
+
 
 class BotUserConfig:
     def __init__(self, default_phone_number: int | str | None = None, phone_numbers: Dict = dict()):
@@ -41,7 +45,7 @@ class BotUserConfig:
                'location_time': arrow.get(2023, 1, 1)}) for pn in phone_numbers} if phone_numbers is not None else None
 
     def __getitem__(self, item):
-        return self.phone_numbers[item]
+        return self.phone_numbers[int(item)]
 
     def __contains__(self, item):
         return item in self.phone_numbers
@@ -52,16 +56,16 @@ class BotUserConfig:
 
     @default_phone_number.setter
     def default_phone_number(self, value):
-        self._default_phone_number = value
+        self._default_phone_number = int(value)
 
 
-async def init_phone_number(event: NewMessage) -> str | None:
+async def init_phone_number(event: NewMessage) -> int | None:
     if event.message.contact:  # first check if NewMessage contains contact field
-        return event.message.contact.phone_number[-9:]  # cut the region part, 9 last digits
+        return int(event.message.contact.phone_number[-9:])  # cut the region part, 9 last digits
     elif not event.text.startswith('/init'):  # then check if starts with /init, if so proceed
         return None
     elif len(event.text.split(' ')) == 2 and event.text.split()[1].strip().isdigit():
-        return event.text.split()[1].strip()
+        return int(event.text.split()[1].strip())
     else:
         return None
 
