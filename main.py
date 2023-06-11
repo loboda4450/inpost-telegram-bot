@@ -42,8 +42,7 @@ async def main(config, inp: Dict):
     await client.start(bot_token=config['bot_token'])
     print("Started")
 
-    @client.on(NewMessage(func=lambda e: e.text.startswith(
-        '/init') or e.message.contact is not None))  # TODO: add phone number reinitialization
+    @client.on(NewMessage(func=lambda e: e.text.startswith('/init') or e.message.contact is not None))
     async def init_user(event):
         async with client.conversation(event.sender.id) as convo:
             phone_number = await init_phone_number(event=event)
@@ -57,17 +56,28 @@ async def main(config, inp: Dict):
                 inp.update({event.sender.id: BotUserConfig()})
                 database.add_user(event=event)
 
-            if phone_number in inp[event.sender.id]:
-                await convo.send_message('You have initialized this phone number before, cancelling!',
-                                         buttons=Button.clear())
-                convo.cancel()
-                return
+            if database.phone_number_exists(phone_number=phone_number):
+                if phone_number in inp[event.sender.id]:
+                    await convo.send_message(
+                        'You have initialized this phone number before, do you want to do it again? '
+                        'All defaults remains!', buttons=[Button.inline('Do it'), Button.inline('Cancel')])
+                    resp = await convo.wait_event(CallbackQuery())
 
-            try:
-                if database.phone_number_exists(phone_number=phone_number):
-                    await convo.send_message('Phone number already exist!', buttons=Button.clear())
+                    match resp.data:
+                        case b'Do it':
+                            await resp.reply('Fine, moving on to sending sms code!')
+                        case b'Cancel':
+                            await resp.reply('Fine, cancelling!')
+                            convo.cancel()
+                            return
+
+                else:
+                    await convo.send_message("Phone number already exist and you are not it's owner, cancelling!",
+                                             buttons=Button.clear())
+                    convo.cancel()
                     return
 
+            else:
                 database.add_phone_number_config(event=event, phone_number=phone_number)
 
                 inp[event.sender.id].phone_numbers.update({phone_number: BotUserPhoneNumberConfig(**{
@@ -81,6 +91,7 @@ async def main(config, inp: Dict):
                     database.edit_default_phone_number(event=event, default_phone_number=phone_number)
                     inp[event.sender.id].default_phone_number = phone_number
 
+            try:
                 if not await inp[event.sender.id][phone_number].inpost.send_sms_code():
                     await convo.send_message('Could not send sms code! Start initializing again!',
                                              buttons=Button.clear())
@@ -188,17 +199,18 @@ async def main(config, inp: Dict):
 
         match event:
             case CallbackQuery.Event():
+                phone_number = inp[event.sender.id].default_phone_number.phone_number
+                if phone_number is None:
+                    await event.reply(f'Buttons works only with default phone number. '
+                                      f'Please set up one before using them or type following command: '
+                                      f'\n`/set_default_phone_number <phone_number>')
+                    return
+
                 if event.data == b'Pending Parcels':
                     status = pending_statuses
                 elif event.data == b'Delivered Parcels':
                     status = ParcelStatus.DELIVERED
 
-                phone_number = inp[event.sender.id].default_phone_number.phone_number
-                if phone_number is None:
-                    await event.reply(f'Buttons works only with default phone number. '
-                                      f'Please set up one before using them or type following command: '
-                                      f'\n`/command <phone_number> <rest of needed params>')
-                    return
             case NewMessage.Event():
                 if '/pending' in event.text:
                     status = pending_statuses
@@ -213,8 +225,7 @@ async def main(config, inp: Dict):
                     case 1:
                         phone_number = inp[event.sender.id].default_phone_number.phone_number
                     case 2:
-                        phone_number = inp[event.sender.id][
-                            event.text.strip().split(' ')[1].strip()].inpost.phone_number
+                        phone_number = inp[event.sender.id][event.text.strip().split(' ')[1].strip()].inpost.phone_number
                     case _:
                         await event.reply(not_enough_parameters_provided)
                         return
@@ -568,6 +579,7 @@ async def main(config, inp: Dict):
                                 await convo.send_message(f'Parcel is not ready for pick up! Status: {p.status}')
                             case 'DELIVERED':
                                 await convo.send_message('Parcel has been already delivered!')
+                                return
 
                     else:
                         inp[event.sender.id][phone_number][
@@ -586,12 +598,12 @@ async def main(config, inp: Dict):
                 match decision.data:
                     case b'Yes!':
                         await open_comp(event, inp, phone_number, p)
-                        await convo.send_message(open_comp_message_builder(parcel=p), buttons=Button.clear())
+                        await decision.reply(open_comp_message_builder(parcel=p), buttons=Button.clear())
                     case b'Hell no!':
-                        await convo.send_message('Fine, compartment remains closed!', buttons=Button.clear())
+                        await decision.reply('Fine, compartment remains closed!', buttons=Button.clear())
                     case _:
-                        await convo.send_message('Unrecognizable decision made, please start opening compartment '
-                                                 'again!')
+                        await decision.reply('Unrecognizable decision made, please start opening compartment '
+                                             'again!')
 
                 return
 
