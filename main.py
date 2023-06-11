@@ -46,7 +46,7 @@ async def main(config, inp: Dict):
     async def get_me(event):
         for phone_number in inp[event.sender.id].phone_numbers.values():
             await event.reply(f'**Phone number**: `{str(phone_number.phone_number)[:3] + "***" + str(phone_number.phone_number)[6:]}`'
-                              f'\n**Default parcel machine**: `{phone_number.default_parcel_machine}`'
+                              f'\n**Default parcel machine**: `{phone_number.default_parcel_machine if phone_number.default_parcel_machine is not None else "Not set"}`'
                               f'\n**Notifications**: `{phone_number.notifications}`'
                               f'\n**Geo checking**: `{phone_number.geocheck}`'
                               f'\n**Air quality**: `{phone_number.airquality}`')
