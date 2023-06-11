@@ -42,6 +42,15 @@ async def main(config, inp: Dict):
     await client.start(bot_token=config['bot_token'])
     print("Started")
 
+    @client.on(NewMessage(pattern='/me'))
+    async def get_me(event):
+        for phone_number in inp[event.sender.id].phone_numbers.values():
+            await event.reply(f'**Phone number**: `{str(phone_number.phone_number)[:3] + "***" + str(phone_number.phone_number)[6:]}`'
+                              f'\n**Default parcel machine**: `{phone_number.default_parcel_machine}`'
+                              f'\n**Notifications**: `{phone_number.notifications}`'
+                              f'\n**Geo checking**: `{phone_number.geocheck}`'
+                              f'\n**Air quality**: `{phone_number.airquality}`')
+
     @client.on(NewMessage(func=lambda e: e.text.startswith('/init') or e.message.contact is not None))
     async def init_user(event):
         async with client.conversation(event.sender.id) as convo:
@@ -225,7 +234,8 @@ async def main(config, inp: Dict):
                     case 1:
                         phone_number = inp[event.sender.id].default_phone_number.phone_number
                     case 2:
-                        phone_number = inp[event.sender.id][event.text.strip().split(' ')[1].strip()].inpost.phone_number
+                        phone_number = inp[event.sender.id][
+                            event.text.strip().split(' ')[1].strip()].inpost.phone_number
                     case _:
                         await event.reply(not_enough_parameters_provided)
                         return
@@ -343,7 +353,9 @@ async def main(config, inp: Dict):
         database.edit_default_parcel_machine(event=event, phone_number=phone_number,
                                              default_parcel_machine=default_parcel_machine)
         inp[event.sender.id][int(phone_number)].default_parcel_machine = default_parcel_machine
-        await event.reply(f'Default parcel machine is set to {default_parcel_machine}!')
+        await event.reply(f'Default parcel machine is set to {default_parcel_machine}! Remember, there is no '
+                          f'verification to provided parcel machine code, so if typed incorrectly it just will not '
+                          f'work!')
 
     @client.on(NewMessage(pattern='/set_geocheck'))
     async def set_geocheck(event):
@@ -551,7 +563,7 @@ async def main(config, inp: Dict):
                 return
 
             async with client.conversation(event.sender.id) as convo:
-                if inp[event.sender.id][phone_number].geocheck:
+                if inp[event.sender.id][phone_number].geocheck or inp[event.sender.id][phone_number].default_parcel_machine != p.pickup_point.name:
                     if inp[event.sender.id][phone_number].location_time.shift(minutes=+2) < arrow.now(
                             tz='Europe/Warsaw'):
                         await convo.send_message(
@@ -588,9 +600,9 @@ async def main(config, inp: Dict):
                                                  'skipping location verification.\nAre you sure to open?',
                                                  buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
                 else:
-                    await convo.send_message(f'You have location checking off, skipping! '
-                                             f'You can turn it on by sending `/set_geocheck {phone_number} On`!\n\n'
-                                             f'Are you sure to open?',
+                    await convo.send_message(f'You have location checking off or this parcel is in default parcel '
+                                             f'machine, skipping! You can turn location checking on by sending:\n '
+                                             f'`/set_geocheck {phone_number} On`!\n\nAre you sure to open?',
                                              buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
 
                 decision = await convo.wait_event(event=CallbackQuery(), timeout=30)

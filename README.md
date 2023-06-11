@@ -31,6 +31,7 @@ But if you want to call command on specific phone number, you have to do it this
 - `/start` - display start message and allow user to log in with Telegram
 - `/clear` - if you accidentally invoked `/start` and annoying box sprang up
 - `/init <phone number>` - login using phone number
+- `/me` - show information about all initialized accounts
 - `/pending` - receive pending parcels
 - `/delivered` - receive delivered parcels
 - `/parcel <shipment number>` - return parcel with desired shipment number
