@@ -6,3 +6,4 @@ inpost.sqlite
 config.yml
 .idea
 __pycache__
+*.log
