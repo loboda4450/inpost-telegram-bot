@@ -15,7 +15,7 @@ from constants import pending_statuses, welcome_message, friend_invitations_mess
     not_enough_parameters_provided
 from utils import get_shipment_and_phone_number_from_button, send_pcgs, send_qrc, show_oc, open_comp, \
     send_details, BotUserPhoneNumberConfig, BotUserConfig, send_pcg, init_phone_number, confirm_location, \
-    get_shipment_and_phone_number_from_reply
+    get_shipment_and_phone_number_from_reply, is_parcel_owner
 
 
 async def reply(event: NewMessage.Event | CallbackQuery.Event, text: str, alert=True):
@@ -549,7 +549,7 @@ async def main(config, inp: Dict):
                 if inp[event.sender.id].default_phone_number is None:
                     await event.reply(use_command_as_reply_message_builder("/open"))
                     return
-                shipment_number, phone_number = get_shipment_and_phone_number_from_button(event, inp)
+                shipment_number, phone_number = await get_shipment_and_phone_number_from_button(event, inp)
             case _:
                 await event.reply('Bad things happened, call admin now!')
                 return
@@ -564,19 +564,18 @@ async def main(config, inp: Dict):
 
             async with client.conversation(event.sender.id) as convo:
                 if inp[event.sender.id][phone_number].geocheck or inp[event.sender.id][phone_number].default_parcel_machine != p.pickup_point.name:
-                    if inp[event.sender.id][phone_number].location_time.shift(minutes=+2) < arrow.now(
-                            tz='Europe/Warsaw'):
+                    if inp[event.sender.id][phone_number].location_time.shift(minutes=+2) < arrow.now(tz='Europe/Warsaw'):
                         await convo.send_message(
                             'Please share your location so I can check whether you are near parcel machine or not.',
                             buttons=[Button.request_location('Confirm localization')])
 
                         geo = await convo.get_response(timeout=30)
-                        if not geo.message.geo:
+                        if not geo.geo:
                             await convo.send_message('Your message does not contain geolocation, start opening again!')
                             return
 
                         inp[event.sender.id][phone_number].location_time = arrow.now(tz='Europe/Warsaw')
-                        inp[event.sender.id][phone_number].location = (geo.message.geo.lat, geo.message.geo.long)
+                        inp[event.sender.id][phone_number].location = (geo.geo.lat, geo.geo.long)
 
                         status = await confirm_location(event=geo, inp=inp, parcel_obj=p)
 
@@ -727,19 +726,38 @@ async def main(config, inp: Dict):
                 friends = await inp[event.sender.id][phone_number].inpost.get_parcel_friends(
                     shipment_number=shipment_number, parse=True)
 
-                for f in friends['friends']:
-                    await convo.send_message(f'**Name**: {f.name}\n'
-                                             f'**Phone number**: {f.phone_number}',
-                                             buttons=[Button.inline('Dispatch')])
+                if not await is_parcel_owner(inp=inp, shipment_number=shipment_number, phone_number=phone_number, event=event):
+                    await event.reply('This parcel does not belong to you, cannot share it')
+                    return
+
+                if len(friends['friends']) == 0:
+                    await event.reply('This parcel has no people it can be shared with!')
+                    return
+
                 if isinstance(event, CallbackQuery.Event):
-                    await convo.send_message('Fine, now pick a friend to share parcel to and press `Dispatch` button')
+                    for f in friends['friends']:
+                        await convo.send_message(f'**Name**: {f.name}\n'
+                                                 f'**Phone number**: {f.phone_number}',
+                                                 buttons=[Button.inline('Dispatch')])
+
+                    await event.reply('Fine, now pick a friend to share parcel to and press `Dispatch` button')
                     friend = await convo.wait_event(CallbackQuery(pattern='Dispatch'), timeout=30)
+                    friend_event = friend
                     friend = await friend.get_message()
 
                 elif isinstance(event, NewMessage.Event):
+                    for f in friends['friends']:
+                        await convo.send_message(f'**Name**: {f.name}\n'
+                                                 f'**Phone number**: {f.phone_number}')
+
                     await convo.send_message('Fine, now pick a friend to share parcel to and '
                                              'send a reply to him/her with `/dispatch`')
                     friend = await convo.get_response(timeout=30)
+                    if not friend.is_reply:
+                        await friend.reply('You must reply to message with desired friend, start sharing again!')
+                        return
+
+                    friend_event = friend
                     friend = await friend.get_reply_message()
 
                 friend = friend.raw_text.split('\n')
@@ -749,9 +767,9 @@ async def main(config, inp: Dict):
                     next((f for f in friends['friends'] if (f.name == friend[0] and f.phone_number == friend[1])))).uuid
                 if await inp[event.sender.id][phone_number].inpost.share_parcel(uuid=uuid,
                                                                                 shipment_number=shipment_number):
-                    await convo.send_message('Parcel shared!')
+                    await friend_event.reply('Parcel shared!')
                 else:
-                    await convo.send_message('Not shared, try again!')
+                    await friend_event.reply('Not shared, try again!')
 
             except asyncio.TimeoutError as e:
                 logger.exception(e)
@@ -771,6 +789,8 @@ async def main(config, inp: Dict):
             except Exception as e:
                 logger.exception(e)
                 await event.reply('Bad things happened, call admin now!')
+            finally:
+                convo.cancel()
 
     async with client:
         print("Good morning!")

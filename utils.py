@@ -7,9 +7,10 @@ from inpost import Inpost
 from inpost.static import Parcel, ParcelShipmentType, ParcelStatus
 from telethon import Button
 from telethon.events import NewMessage, CallbackQuery
+from telethon.tl.patched import Message
 
 from constants import multicompartment_message_builder, compartment_message_builder, delivered_message_builder, \
-    details_message_builder, ready_to_pickup_message_builder, use_command_as_reply_message_builder
+    details_message_builder, ready_to_pickup_message_builder
 
 
 class BotUserPhoneNumberConfig:
@@ -70,7 +71,7 @@ async def init_phone_number(event: NewMessage) -> int | None:
         return None
 
 
-async def confirm_location(event: NewMessage,
+async def confirm_location(event: NewMessage | Message,
                            inp: dict,
                            phone_number: str | None = None,
                            shipment_number: str | None = None,
@@ -85,12 +86,19 @@ async def confirm_location(event: NewMessage,
     else:
         p = parcel_obj
 
+    if isinstance(event, NewMessage):
+        loc = event.message.geo
+    elif isinstance(event, Message):
+        loc = event.geo
+    else:
+        return
+
     match p.status:
         case ParcelStatus.DELIVERED:
             return 'DELIVERED'
         case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE:
-            if (p.pickup_point.latitude - 0.0005 <= event.message.geo.lat <= p.pickup_point.latitude + 0.0005) and (
-                    p.pickup_point.longitude - 0.0005 <= event.message.geo.long <= p.pickup_point.longitude + 0.0005):
+            if (p.pickup_point.latitude - 0.0005 <= loc.lat <= p.pickup_point.latitude + 0.0005) and (
+                    p.pickup_point.longitude - 0.0005 <= loc.long <= p.pickup_point.longitude + 0.0005):
                 return 'IN RANGE'
             else:
                 return 'OUT OF RANGE'
@@ -166,13 +174,14 @@ async def send_pcg(event: NewMessage, inp: dict, phone_number: int):
                               buttons=[
                                   [Button.inline('Open Code'), Button.inline('QR Code')],
                                   [Button.inline('Details'), Button.inline('Open Compartment')],
-                                  [Button.inline('Share')]] if package.operations.can_share_parcel else [
+                                  [Button.inline('Share')]] if package.operations.can_share_parcel and package.ownership_status == 'OWN' else [
                                   [Button.inline('Open Code'), Button.inline('QR Code')],
                                   [Button.inline('Details'), Button.inline('Open Compartment')]])
         case _:
             await event.reply(message,
                               buttons=[Button.inline('Details'),
-                                       Button.inline('Share')] if package.operations.can_share_parcel else [Button.inline('Details')])
+                                       Button.inline('Share')] if package.operations.can_share_parcel and package.ownership_status == 'OWN' else [
+                                  Button.inline('Details')])
 
 
 async def send_pcgs(event, inp, status, phone_number):
@@ -221,14 +230,15 @@ async def send_pcgs(event, inp, status, phone_number):
                                       buttons=[
                                           [Button.inline('Open Code'), Button.inline('QR Code')],
                                           [Button.inline('Details'), Button.inline('Open Compartment')],
-                                          [Button.inline('Share')]] if package.operations.can_share_parcel else
+                                          [Button.inline('Share')]] if package.operations.can_share_parcel and package.ownership_status == 'OWN' else
                                       [[Button.inline('Open Code'), Button.inline('QR Code')],
                                        [Button.inline('Details'), Button.inline('Open Compartment')]]
                                       )
                 case _:
                     await event.reply(message,
                                       buttons=[Button.inline('Details'),
-                                               Button.inline('Share')] if package.operations.can_share_parcel else [Button.inline('Details')])
+                                               Button.inline('Share')] if package.operations.can_share_parcel and package.ownership_status == 'OWN' else [
+                                          Button.inline('Details')])
 
     else:
         if isinstance(event, CallbackQuery.Event):
@@ -272,7 +282,7 @@ async def send_details(event, inp, shipment_number, phone_number=None):
         phone_number = inp[event.sender.id].default_phone_number.inpost.phone_number
 
     parcel: Parcel = await inp[event.sender.id][int(phone_number)].inpost.get_parcel(shipment_number=shipment_number,
-                                                                                parse=True)
+                                                                                     parse=True)
 
     if parcel.is_multicompartment:  # TODO: Add airsensor data
         parcels = await inp[event.sender.id][phone_number].inpost.get_multi_compartment(
@@ -314,3 +324,10 @@ async def send_details(event, inp, shipment_number, phone_number=None):
                               f'**Events**:\n{events}')
         else:
             await event.reply(f'**Events**:\n{events}')
+
+
+async def is_parcel_owner(inp, shipment_number, phone_number, event) -> bool:
+    parcel = await inp[event.sender.id][phone_number].inpost.get_parcel(
+        shipment_number=(shipment_number), parse=True)
+
+    return parcel.ownership_status == 'OWN'
