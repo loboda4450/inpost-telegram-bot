@@ -1,5 +1,3 @@
-import json
-import os
 from typing import List, Dict
 
 import arrow
@@ -9,13 +7,14 @@ from telethon import Button
 from telethon.events import NewMessage, CallbackQuery
 from telethon.tl.patched import Message
 
+import database
 from constants import multicompartment_message_builder, compartment_message_builder, delivered_message_builder, \
     details_message_builder, ready_to_pickup_message_builder
 
 
 class BotUserPhoneNumberConfig:
     def __init__(self, **kwargs):
-        self.inpost: Inpost = Inpost.from_dict(kwargs['inpost']) if 'inpost' in kwargs else Inpost()
+        self.inpost: Inpost = Inpost.from_dict(kwargs['inpost']) if 'inpost' in kwargs else Inpost(phone_number=kwargs['phone_number'])
         self.notifications: bool = kwargs['notifications']
         self.default_parcel_machine: str = kwargs['default_parcel_machine']
         self.geocheck: bool = kwargs['geocheck']
@@ -30,8 +29,9 @@ class BotUserPhoneNumberConfig:
 
 
 class BotUserConfig:
-    def __init__(self, default_phone_number: int | str | None = None, phone_numbers: Dict = dict()):
+    def __init__(self, default_phone_number: int | str | None = None, consent: bool | None = None, phone_numbers: Dict = dict()):
         self._default_phone_number = default_phone_number
+        self.consent: bool = consent
         self.phone_numbers: Dict = {pn: BotUserPhoneNumberConfig(
             **{'inpost': {'phone_number': pn,
                           'sms_code': phone_numbers[pn]['sms_code'],
@@ -42,6 +42,7 @@ class BotUserConfig:
                'default_parcel_machine': phone_numbers[pn]['default_parcel_machine'],
                'geocheck': phone_numbers[pn]['geocheck'],
                'airquality': phone_numbers[pn]['airquality'],
+               'consent': consent,
                'location': (0, 0),
                'location_time': arrow.get(2023, 1, 1)}) for pn in phone_numbers} if phone_numbers is not None else None
 
@@ -141,9 +142,9 @@ async def get_shipment_and_phone_number_from_button(event, inp):
     return shipment_number, phone_number
 
 
-async def send_pcg(event: NewMessage, inp: dict, phone_number: int):
+async def send_pcg(event: NewMessage, inp: dict, phone_number: int, parcel_type):
     package: Parcel = await inp[event.sender.id][phone_number].inpost.get_parcel(
-        shipment_number=(await get_shipment_number(event)), parse=True)
+        shipment_number=(await get_shipment_number(event)), parcel_type=parcel_type, parse=True)
 
     if package.is_multicompartment:
         packages: List[Parcel] = await inp[event.sender.id][phone_number].inpost.get_multi_compartment(
@@ -160,13 +161,11 @@ async def send_pcg(event: NewMessage, inp: dict, phone_number: int):
     else:
         message = compartment_message_builder(package=package)
 
-    to_log = await inp[event.sender.id][phone_number].inpost.get_parcel(
-        shipment_number=package.shipment_number, parse=False)
-    filename = f"parcel_logs/{event.sender.id}/{phone_number}/{package.shipment_number} {arrow.now('Europe/Warsaw').format('DD.MM.YYYY HH:mm:ss')}.json"
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    if inp[event.sender.id].consent:
+        to_log = await inp[event.sender.id][phone_number].inpost.get_parcel(
+            shipment_number=package.shipment_number, parcel_type=parcel_type, parse=False)
 
-    with open(filename, "w") as f:
-        json.dump(to_log, f)
+        database.add_parcel(event=event, phone_number=phone_number, parcel=to_log)
 
     match package.status:
         case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE:
@@ -174,18 +173,22 @@ async def send_pcg(event: NewMessage, inp: dict, phone_number: int):
                               buttons=[
                                   [Button.inline('Open Code'), Button.inline('QR Code')],
                                   [Button.inline('Details'), Button.inline('Open Compartment')],
-                                  [Button.inline('Share')]] if package.operations.can_share_parcel and package.ownership_status == 'OWN' else [
+                                  [Button.inline(
+                                      'Share')]] if package.operations.can_share_parcel and package.ownership_status == 'OWN' else [
                                   [Button.inline('Open Code'), Button.inline('QR Code')],
                                   [Button.inline('Details'), Button.inline('Open Compartment')]])
         case _:
             await event.reply(message,
                               buttons=[Button.inline('Details'),
-                                       Button.inline('Share')] if package.operations.can_share_parcel and package.ownership_status == 'OWN' else [
+                                       Button.inline(
+                                           'Share')] if package.operations.can_share_parcel and package.ownership_status == 'OWN' else [
                                   Button.inline('Details')])
 
 
-async def send_pcgs(event, inp, status, phone_number):
-    packages: List[Parcel] = await inp[event.sender.id][int(phone_number)].inpost.get_parcels(status=status, parse=True)
+async def send_pcgs(event, inp, status, phone_number, parcel_type):
+    packages: List[Parcel] = await inp[event.sender.id][int(phone_number)].inpost.get_parcels(status=status,
+                                                                                              parcel_type=parcel_type,
+                                                                                              parse=True)
     exclude = []
     if len(packages) > 0:
         for package in packages:
@@ -215,13 +218,11 @@ async def send_pcgs(event, inp, status, phone_number):
             if package.status in (ParcelStatus.STACK_IN_BOX_MACHINE, ParcelStatus.STACK_IN_CUSTOMER_SERVICE_POINT):
                 message = f'⚠️ **PARCEL IS IN SUBSTITUTIONARY PICK UP POINT!** ⚠\n️\n' + message
 
-            to_log = await inp[event.sender.id][int(phone_number)].inpost.get_parcel(
-                shipment_number=package.shipment_number, parse=False)
-            filename = f"parcel_logs/{event.sender.id}/{phone_number}/{package.shipment_number}/{arrow.now('Europe/Warsaw').format('DD.MM.YYYY HH:mm:ss')}.json"
-            os.makedirs(os.path.dirname(filename), exist_ok=True)
+            if inp[event.sender.id].consent:
+                to_log = await inp[event.sender.id][int(phone_number)].inpost.get_parcel(
+                    shipment_number=package.shipment_number, parcel_type=parcel_type, parse=False)
 
-            with open(filename, "w") as f:
-                json.dump(to_log, f)
+                database.add_parcel(event=event, phone_number=phone_number, parcel=to_log)
 
             match package.status:
                 case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE | ParcelStatus.STACK_IN_CUSTOMER_SERVICE_POINT:
@@ -230,14 +231,16 @@ async def send_pcgs(event, inp, status, phone_number):
                                       buttons=[
                                           [Button.inline('Open Code'), Button.inline('QR Code')],
                                           [Button.inline('Details'), Button.inline('Open Compartment')],
-                                          [Button.inline('Share')]] if package.operations.can_share_parcel and package.ownership_status == 'OWN' else
+                                          [Button.inline(
+                                              'Share')]] if package.operations.can_share_parcel and package.ownership_status == 'OWN' else
                                       [[Button.inline('Open Code'), Button.inline('QR Code')],
                                        [Button.inline('Details'), Button.inline('Open Compartment')]]
                                       )
                 case _:
                     await event.reply(message,
                                       buttons=[Button.inline('Details'),
-                                               Button.inline('Share')] if package.operations.can_share_parcel and package.ownership_status == 'OWN' else [
+                                               Button.inline(
+                                                   'Share')] if package.operations.can_share_parcel and package.ownership_status == 'OWN' else [
                                           Button.inline('Details')])
 
     else:
@@ -271,7 +274,7 @@ async def open_comp(event, inp, phone_number, p: Parcel):
     return await inp[event.sender.id][phone_number].inpost.collect(parcel_obj=p)
 
 
-async def send_details(event, inp, shipment_number, phone_number=None):
+async def send_details(event, inp, shipment_number, parcel_type, phone_number=None):
     if phone_number is None:
         if inp[event.sender.id].default_phone_number is None:
             await event.reply(f'Buttons works only with default phone number. '
@@ -282,6 +285,7 @@ async def send_details(event, inp, shipment_number, phone_number=None):
         phone_number = inp[event.sender.id].default_phone_number.inpost.phone_number
 
     parcel: Parcel = await inp[event.sender.id][int(phone_number)].inpost.get_parcel(shipment_number=shipment_number,
+                                                                                     parcel_type=parcel_type,
                                                                                      parse=True)
 
     if parcel.is_multicompartment:  # TODO: Add airsensor data
@@ -326,8 +330,8 @@ async def send_details(event, inp, shipment_number, phone_number=None):
             await event.reply(f'**Events**:\n{events}')
 
 
-async def is_parcel_owner(inp, shipment_number, phone_number, event) -> bool:
+async def is_parcel_owner(inp, shipment_number, phone_number, event, parcel_type) -> bool:
     parcel = await inp[event.sender.id][phone_number].inpost.get_parcel(
-        shipment_number=(shipment_number), parse=True)
+        shipment_number=shipment_number, parcel_type=parcel_type, parse=True)
 
     return parcel.ownership_status == 'OWN'

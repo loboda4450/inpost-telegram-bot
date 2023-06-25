@@ -4,8 +4,8 @@ from typing import Dict
 
 import arrow
 import yaml
-from inpost.static import ParcelStatus
-from inpost.static.exceptions import *
+from inpost.static import ParcelStatus, ParcelType, PhoneNumberError, UnauthorizedError, UnidentifiedAPIError, \
+    NotAuthenticatedError, NotFoundError, ParcelTypeError, Parcel
 from telethon import TelegramClient, Button
 from telethon.events import NewMessage, CallbackQuery
 
@@ -16,13 +16,6 @@ from constants import pending_statuses, welcome_message, friend_invitations_mess
 from utils import get_shipment_and_phone_number_from_button, send_pcgs, send_qrc, show_oc, open_comp, \
     send_details, BotUserPhoneNumberConfig, BotUserConfig, send_pcg, init_phone_number, confirm_location, \
     get_shipment_and_phone_number_from_reply, is_parcel_owner
-
-
-async def reply(event: NewMessage.Event | CallbackQuery.Event, text: str, alert=True):
-    if isinstance(event, CallbackQuery.Event):
-        await event.answer(text, alert=alert)
-    elif isinstance(event, NewMessage.Event):
-        await event.reply(text)
 
 
 async def main(config, inp: Dict):
@@ -37,6 +30,7 @@ async def main(config, inp: Dict):
     users = database.get_dict()
 
     inp = {user: BotUserConfig(default_phone_number=database.get_default_phone_number(userid=user).phone_number,
+                               consent=database.get_user_consent(userid=user),
                                phone_numbers=users[user]) for user in users}
 
     await client.start(bot_token=config['bot_token'])
@@ -44,63 +38,69 @@ async def main(config, inp: Dict):
 
     @client.on(NewMessage(pattern='/me'))
     async def get_me(event):
+        if event.sender.id not in inp:
+            await event.reply('You are not initialized')
+            return
+
         for phone_number in inp[event.sender.id].phone_numbers.values():
-            await event.reply(f'**Phone number**: `{str(phone_number.phone_number)[:3] + "***" + str(phone_number.phone_number)[6:]}`'
-                              f'\n**Default parcel machine**: `{phone_number.default_parcel_machine if phone_number.default_parcel_machine is not None else "Not set"}`'
-                              f'\n**Notifications**: `{phone_number.notifications}`'
-                              f'\n**Geo checking**: `{phone_number.geocheck}`'
-                              f'\n**Air quality**: `{phone_number.airquality}`')
+            await event.reply(
+                f'**Phone number**: `{str(phone_number.phone_number)[:3] + "***" + str(phone_number.phone_number)[6:]}`'
+                f'\n**Default parcel machine**: `{phone_number.default_parcel_machine if phone_number.default_parcel_machine != "" else "Not set"}`'
+                f'\n**Notifications**: `{phone_number.notifications}`'
+                f'\n**Geo checking**: `{phone_number.geocheck}`'
+                f'\n**Air quality**: `{phone_number.airquality}`')
 
     @client.on(NewMessage(func=lambda e: e.text.startswith('/init') or e.message.contact is not None))
     async def init_user(event):
         async with client.conversation(event.sender.id) as convo:
             phone_number = await init_phone_number(event=event)
-            if phone_number is None:
-                await convo.send_message('Something is wrong with provided phone number. Start initialization again.',
-                                         buttons=Button.clear())
-                convo.cancel()
-                return
-
-            if event.sender.id not in inp:
-                inp.update({event.sender.id: BotUserConfig()})
-                database.add_user(event=event)
-
-            if database.phone_number_exists(phone_number=phone_number):
-                if phone_number in inp[event.sender.id]:
+            try:
+                if phone_number is None:
                     await convo.send_message(
-                        'You have initialized this phone number before, do you want to do it again? '
-                        'All defaults remains!', buttons=[Button.inline('Do it'), Button.inline('Cancel')])
-                    resp = await convo.wait_event(CallbackQuery())
-
-                    match resp.data:
-                        case b'Do it':
-                            await resp.reply('Fine, moving on to sending sms code!')
-                        case b'Cancel':
-                            await resp.reply('Fine, cancelling!')
-                            convo.cancel()
-                            return
-
-                else:
-                    await convo.send_message("Phone number already exist and you are not it's owner, cancelling!",
-                                             buttons=Button.clear())
+                        'Something is wrong with provided phone number. Start initialization again.',
+                        buttons=Button.clear())
                     convo.cancel()
                     return
 
-            else:
-                database.add_phone_number_config(event=event, phone_number=phone_number)
+                if event.sender.id not in inp:
+                    inp.update({event.sender.id: BotUserConfig()})
+                    database.add_user(event=event)
 
-                inp[event.sender.id].phone_numbers.update({phone_number: BotUserPhoneNumberConfig(**{
-                    'airquality': True,
-                    'default_parcel_machine': None,
-                    'geocheck': True,
-                    'notifications': True})})
-                inp[event.sender.id][phone_number].inpost.set_phone_number(phone_number=phone_number)
+                if database.phone_number_exists(phone_number=phone_number):
+                    if phone_number in inp[event.sender.id]:
+                        await convo.send_message(
+                            'You have initialized this phone number before, do you want to do it again? '
+                            'All defaults remains!', buttons=[Button.inline('Do it'), Button.inline('Cancel')])
+                        resp = await convo.wait_event(CallbackQuery())
 
-                if len(inp[event.sender.id].phone_numbers) == 1:
-                    database.edit_default_phone_number(event=event, default_phone_number=phone_number)
-                    inp[event.sender.id].default_phone_number = phone_number
+                        match resp.data:
+                            case b'Do it':
+                                await resp.reply('Fine, moving on to sending sms code!')
+                            case b'Cancel':
+                                await resp.reply('Fine, cancelling!')
+                                convo.cancel()
+                                return
 
-            try:
+                    else:
+                        await convo.send_message("Phone number already exist and you are not it's owner, cancelling!",
+                                                 buttons=Button.clear())
+                        convo.cancel()
+                        return
+
+                else:
+                    inp[event.sender.id].phone_numbers.update({phone_number: BotUserPhoneNumberConfig(**{
+                        'airquality': True,
+                        'default_parcel_machine': None,
+                        'geocheck': True,
+                        'notifications': True,
+                        'phone_number': phone_number})})
+
+                    database.add_phone_number_config(event=event, phone_number=phone_number)
+
+                    if len(inp[event.sender.id].phone_numbers) == 1:
+                        inp[event.sender.id].default_phone_number = phone_number
+                        database.edit_default_phone_number(event=event, default_phone_number=phone_number)
+
                 if not await inp[event.sender.id][phone_number].inpost.send_sms_code():
                     await convo.send_message('Could not send sms code! Start initializing again!',
                                              buttons=Button.clear())
@@ -166,6 +166,14 @@ async def main(config, inp: Dict):
             await event.reply('You are not initialized')
             return
 
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
         match len(event.text.strip().split(' ')):
             case 2:
                 phone_number = inp[event.sender.id].default_phone_number.phone_number
@@ -176,7 +184,7 @@ async def main(config, inp: Dict):
                 return
 
         try:
-            await send_pcg(event, inp, phone_number)
+            await send_pcg(event, inp, phone_number, ParcelType.TRACKED)
 
         except NotAuthenticatedError as e:
             logger.exception(e)
@@ -197,6 +205,8 @@ async def main(config, inp: Dict):
     @client.on(NewMessage(pattern='/pending'))
     @client.on(NewMessage(pattern='/delivered'))
     @client.on(NewMessage(pattern='/all'))
+    @client.on(NewMessage(pattern='/sent'))
+    @client.on(NewMessage(pattern='/returns'))
     @client.on(CallbackQuery(pattern=b'Pending Parcels'))
     @client.on(CallbackQuery(pattern=b'Delivered Parcels'))
     async def get_packages(event):
@@ -204,7 +214,16 @@ async def main(config, inp: Dict):
             await event.reply('You are not initialized')
             return
 
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
         status = None
+        parcel_type = None
 
         match event:
             case CallbackQuery.Event():
@@ -217,16 +236,27 @@ async def main(config, inp: Dict):
 
                 if event.data == b'Pending Parcels':
                     status = pending_statuses
+                    parcel_type = ParcelType.TRACKED
                 elif event.data == b'Delivered Parcels':
                     status = ParcelStatus.DELIVERED
+                    parcel_type = ParcelType.TRACKED
 
             case NewMessage.Event():
                 if '/pending' in event.text:
                     status = pending_statuses
+                    parcel_type = ParcelType.TRACKED
                 elif '/delivered' in event.text:
                     status = ParcelStatus.DELIVERED
+                    parcel_type = ParcelType.TRACKED
                 elif '/all' in event.text:
                     status = None
+                    parcel_type = ParcelType.TRACKED
+                elif '/sent' in event.text:
+                    status = None
+                    parcel_type = ParcelType.SENT
+                elif '/returns' in event.text:
+                    status = None
+                    parcel_type = ParcelType.RETURNS
                 else:
                     return
 
@@ -250,7 +280,7 @@ async def main(config, inp: Dict):
                 return
 
         try:
-            await send_pcgs(event, inp, status, phone_number)
+            await send_pcgs(event, inp, status, phone_number, parcel_type)
 
         except (NotAuthenticatedError, ParcelTypeError) as e:
             logger.exception(e)
@@ -271,6 +301,14 @@ async def main(config, inp: Dict):
     async def send_friends(event):
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
+            return
+
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
             return
 
         async with client.conversation(event.sender.id) as convo:
@@ -311,10 +349,35 @@ async def main(config, inp: Dict):
                 logger.exception(e)
                 await convo.send_message('Bad things happened, call admin now!')
 
+    @client.on(NewMessage(pattern='/consent'))
+    async def consent(event):
+        if event.sender.id not in inp:
+            await event.reply('You are not initialized')
+
+        if event.text[-2:] == 'no':
+            database.set_user_consent(event=event, consent=False)
+            inp[event.sender.id].consent = False
+            await event.reply(f'Your data will not be collected from this moment. '
+                              f'Anytime you change your mind just type\n\n`/consent yes`.')
+        elif event.text[-3:] == 'yes':
+            database.set_user_consent(event=event, consent=True)
+            inp[event.sender.id].consent = True
+            await event.reply(f'Your data will be collected from this moment.')
+        else:
+            await event.reply('Please specify your answer, available options are `yes` and `no`')
+
     @client.on(NewMessage(pattern='/set_default_phone_number'))
     async def set_default_phone_number(event):
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
+
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
 
         msg = event.text.strip().split(' ')
 
@@ -336,6 +399,14 @@ async def main(config, inp: Dict):
     async def set_default_phone_number(event):
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
+
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
 
         msg = event.text.strip().split(' ')
 
@@ -362,6 +433,14 @@ async def main(config, inp: Dict):
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
 
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
         msg = event.text.strip().split(' ')
 
         match len(msg):
@@ -385,6 +464,14 @@ async def main(config, inp: Dict):
     async def set_airquality(event):
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
+
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
 
         msg = event.text.strip().split(' ')
 
@@ -410,6 +497,14 @@ async def main(config, inp: Dict):
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
 
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
         msg = event.text.strip().split(' ')[1].strip()
 
         match len(event.text.strip().split(' ')):
@@ -434,6 +529,14 @@ async def main(config, inp: Dict):
     async def send_qr_code(event):
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
+            return
+
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
             return
 
         match event:
@@ -488,6 +591,14 @@ async def main(config, inp: Dict):
             await event.reply('You are not initialized')
             return
 
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
         match event:
             case NewMessage.Event():
                 if not event.message.is_reply:
@@ -538,6 +649,14 @@ async def main(config, inp: Dict):
             await event.reply('You are not initialized')
             return
 
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
         match event:
             case NewMessage.Event():
                 if not event.message.is_reply:
@@ -563,8 +682,10 @@ async def main(config, inp: Dict):
                 return
 
             async with client.conversation(event.sender.id) as convo:
-                if inp[event.sender.id][phone_number].geocheck or inp[event.sender.id][phone_number].default_parcel_machine != p.pickup_point.name:
-                    if inp[event.sender.id][phone_number].location_time.shift(minutes=+2) < arrow.now(tz='Europe/Warsaw'):
+                if inp[event.sender.id][phone_number].geocheck or inp[event.sender.id][
+                    phone_number].default_parcel_machine != p.pickup_point.name:
+                    if inp[event.sender.id][phone_number].location_time.shift(minutes=+2) < arrow.now(
+                            tz='Europe/Warsaw'):
                         await convo.send_message(
                             'Please share your location so I can check whether you are near parcel machine or not.',
                             buttons=[Button.request_location('Confirm localization')])
@@ -642,6 +763,14 @@ async def main(config, inp: Dict):
             await event.reply('You are not initialized')
             return
 
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
         match event:
             case NewMessage.Event():
                 if not event.message.is_reply:
@@ -694,6 +823,14 @@ async def main(config, inp: Dict):
             await event.reply('You are not initialized')
             return
 
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
         match event:
             case NewMessage.Event():
                 if not event.message.is_reply:
@@ -726,7 +863,8 @@ async def main(config, inp: Dict):
                 friends = await inp[event.sender.id][phone_number].inpost.get_parcel_friends(
                     shipment_number=shipment_number, parse=True)
 
-                if not await is_parcel_owner(inp=inp, shipment_number=shipment_number, phone_number=phone_number, event=event):
+                if not await is_parcel_owner(inp=inp, shipment_number=shipment_number, phone_number=phone_number,
+                                             event=event):
                     await event.reply('This parcel does not belong to you, cannot share it')
                     return
 

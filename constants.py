@@ -26,7 +26,15 @@ welcome_message = 'Hello!\nThis is a bot helping you to manage your InPost parce
                   '/clear - if you accidentally invoked `/start` and annoying box sprang up\n\n' \
                   'Deprecated commands:\n' \
                   '/refresh - refresh authorization token\n' \
-                  '/confirm <sms code> - confirm login with sms code ' \
+                  '/confirm <sms code> - confirm login with sms code' \
+                  '\n\n\nBeware, before you start using this bot you must **set your consent** to data collecting. ' \
+                  'It will affect all your connected accounts. Dev team assure you, that this data **will not** be ' \
+                  'used or sold and all sensitive ones like your name and surname **will be** removed. ' \
+                  'Collected data are used for three reasons:\n' \
+                  '    - cache - if we save your data bot has to less frequently gather data from inpost,\n' \
+                  '    - development,\n' \
+                  '    - debugging - in case some error occurs.\n' \
+                  '\n\nYou can set your consent by typing `/consent yes` or `/consent no`' \
 
 not_enough_parameters_provided = 'No phone number provided or no option selected!\n' \
            'You can set your default phone number by sending `/set_default_phone_number <phone_number>` ' \

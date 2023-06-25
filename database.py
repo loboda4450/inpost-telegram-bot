@@ -1,12 +1,34 @@
+from datetime import datetime
 from pony.orm import *
 from telethon.events import NewMessage
 
 db = Database('sqlite', 'inpost.sqlite', create_db=True)
 
 
+class ParcelData(db.Entity):
+    # TODO: QRCode getter
+    # TODO: opencode getter
+    # TODO: Date validation in getting details so they are not outdated
+    phone_number = Required('PhoneNumberConfig')
+    timestamp = Required(datetime)
+    shipment_number = Required(str)
+    parcel = Required(Json)
+
+    def qrcode(self) -> str | None:
+        return self.parcel.get('qrCode')
+
+    def opencode(self) -> str | None:
+        return self.parcel.get('openCode')
+    #
+    # def latest(self):
+    #     # had to do it this way, pony seems not to be fully functionable on py3.11...
+    #     return max([p for p in ParcelData.select() if p.parcel.get('shipmentNumber') == self.parcel.get('shipmentNumber')], key=lambda p: p.timestamp)
+
+
 class PhoneNumberConfig(db.Entity):
     user = Required('User')
     default_to = Optional('User')
+    parcels = Set('ParcelData')
     phone_number = PrimaryKey(int)
     sms_code = Optional(int)
     refr_token = Optional(str)
@@ -21,10 +43,44 @@ class PhoneNumberConfig(db.Entity):
 class User(db.Entity):
     userid = PrimaryKey(int, size=64)
     default_phone_number = Optional(PhoneNumberConfig, reverse='default_to')
+    data_collecting_consent = Optional(bool)
     phone_numbers = Set(PhoneNumberConfig)
 
 
 db.generate_mapping(create_tables=True)
+
+
+@db_session
+def get_user_consent(userid):
+    if not User.exists(userid=userid):
+        return False
+
+    return User[userid].data_collecting_consent
+
+
+@db_session
+def set_user_consent(event: NewMessage, consent: bool):
+    if not User.exists(userid=event.sender.id):
+        return False
+
+    u = User.get_for_update(userid=event.sender.id)
+    u.data_collecting_consent = consent
+    commit()
+    return True
+
+
+@db_session
+def add_parcel(event: NewMessage, phone_number: int, parcel: dict):
+    if not User.exists(userid=event.sender.id):
+        return
+
+    user = User.get_for_update(userid=event.sender.id)
+    if PhoneNumberConfig.exists(phone_number=phone_number) and PhoneNumberConfig[phone_number].user == user:
+        pn = PhoneNumberConfig.get_for_update(phone_number=phone_number)
+        pn.parcels.create(timestamp=datetime.now(), parcel=parcel, shipment_number=parcel.get('shipmentNumber'))
+
+        commit()
+    return
 
 
 @db_session
@@ -72,7 +128,8 @@ def edit_default_phone_number(event: NewMessage, default_phone_number: int | str
         default_phone_number = int(default_phone_number)
 
     user = User.get_for_update(userid=event.sender.id)
-    if PhoneNumberConfig.exists(phone_number=default_phone_number) and PhoneNumberConfig[default_phone_number].user == user:
+    if PhoneNumberConfig.exists(phone_number=default_phone_number) and PhoneNumberConfig[
+        default_phone_number].user == user:
         user.default_phone_number = default_phone_number
         commit()
 
