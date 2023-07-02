@@ -527,6 +527,7 @@ async def main(config, inp: Dict):
     @client.on(NewMessage(pattern='/qrcode'))
     @client.on(CallbackQuery(pattern=b'QR Code'))
     async def send_qr_code(event):
+        # TODO: Add database qr code get if user consent
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
             return
@@ -587,6 +588,7 @@ async def main(config, inp: Dict):
     @client.on(CallbackQuery(pattern=b'Open Code'))
     @client.on(NewMessage(pattern='/opencode'))
     async def show_open_code(event):
+        # TODO: Add database open code get if user consent
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
             return
@@ -645,6 +647,8 @@ async def main(config, inp: Dict):
     @client.on(CallbackQuery(pattern=b'Open Compartment'))
     @client.on(NewMessage(pattern='/open'))
     async def open_compartment(event):
+        # TODO: Add database check if user consent if parcel is ParcelType.TRACKED using /open instead of button
+        # TODO: Add database parcel get if user consent
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
             return
@@ -682,10 +686,8 @@ async def main(config, inp: Dict):
                 return
 
             async with client.conversation(event.sender.id) as convo:
-                if inp[event.sender.id][phone_number].geocheck or inp[event.sender.id][
-                    phone_number].default_parcel_machine != p.pickup_point.name:
-                    if inp[event.sender.id][phone_number].location_time.shift(minutes=+2) < arrow.now(
-                            tz='Europe/Warsaw'):
+                if inp[event.sender.id][phone_number].geocheck or inp[event.sender.id][phone_number].default_parcel_machine != p.pickup_point.name:
+                    if inp[event.sender.id][phone_number].location_time.shift(minutes=+2) < arrow.now(tz='Europe/Warsaw'):
                         await convo.send_message(
                             'Please share your location so I can check whether you are near parcel machine or not.',
                             buttons=[Button.request_location('Confirm localization')])
@@ -714,8 +716,7 @@ async def main(config, inp: Dict):
                                 return
 
                     else:
-                        inp[event.sender.id][phone_number][
-                            'config'].location_time_lock = True  # gotta do this in case someone would want to hit 'open compartment' button just on the edge, otherwise hitting 'yes' button could be davson-insensitive
+                        inp[event.sender.id][phone_number].location_time_lock = True  # gotta do this in case someone would want to hit 'open compartment' button just on the edge, otherwise hitting 'yes' button could be davson-insensitive
                         await convo.send_message('Less than 2 minutes have passed since the last compartment opening, '
                                                  'skipping location verification.\nAre you sure to open?',
                                                  buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
@@ -729,8 +730,8 @@ async def main(config, inp: Dict):
 
                 match decision.data:
                     case b'Yes!':
-                        await open_comp(event, inp, phone_number, p)
-                        await decision.reply(open_comp_message_builder(parcel=p), buttons=Button.clear())
+                        if p_ := await open_comp(event, inp, phone_number, p):
+                            await decision.reply(open_comp_message_builder(parcel=p_), buttons=Button.clear())
                     case b'Hell no!':
                         await decision.reply('Fine, compartment remains closed!', buttons=Button.clear())
                     case _:
@@ -759,6 +760,7 @@ async def main(config, inp: Dict):
     @client.on(CallbackQuery(pattern=b'Details'))
     @client.on(NewMessage(pattern='/details'))
     async def details(event):
+        # TODO: Add database check if user consent what ParcelType is parcel
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
             return
@@ -799,7 +801,7 @@ async def main(config, inp: Dict):
             return
 
         try:
-            await send_details(event, inp, shipment_number)
+            await send_details(event, inp, shipment_number, ParcelType.TRACKED)
 
         except (NotAuthenticatedError, ParcelTypeError) as e:
             logger.exception(e)
@@ -819,6 +821,7 @@ async def main(config, inp: Dict):
     @client.on(CallbackQuery(pattern=b'Share'))
     @client.on(NewMessage(pattern='/share'))
     async def share_parcel(event):
+        # TODO: Add database check if user consent what ParcelType is parcel
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
             return
@@ -864,7 +867,8 @@ async def main(config, inp: Dict):
                     shipment_number=shipment_number, parse=True)
 
                 if not await is_parcel_owner(inp=inp, shipment_number=shipment_number, phone_number=phone_number,
-                                             event=event):
+                                             event=event,
+                                             parcel_type=ParcelType.TRACKED):
                     await event.reply('This parcel does not belong to you, cannot share it')
                     return
 

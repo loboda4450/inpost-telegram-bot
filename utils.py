@@ -271,7 +271,12 @@ async def show_oc(event, inp, phone_number, shipment_number):
 
 
 async def open_comp(event, inp, phone_number, p: Parcel):
-    return await inp[event.sender.id][phone_number].inpost.collect(parcel_obj=p)
+    p_ = await inp[event.sender.id][phone_number].inpost.collect(parcel_obj=p)
+    if p_ is not None:
+        database.add_parcel(event=event, phone_number=phone_number, parcel=p_)
+        return p_
+
+    return None
 
 
 async def send_details(event, inp, shipment_number, parcel_type, phone_number=None):
