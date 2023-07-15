@@ -153,6 +153,7 @@ async def main(config, inp: Dict):
                 await convo.send_message('Bad things happened, call admin now!')
 
     @client.on(NewMessage(pattern='/start'))
+    @client.on(NewMessage(pattern='/help'))
     async def start(event):
         await event.reply(welcome_message, buttons=[Button.request_phone('Log in via Telegram')])
 
@@ -353,6 +354,7 @@ async def main(config, inp: Dict):
     async def consent(event):
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
+            return
 
         if event.text[-2:] == 'no':
             database.set_user_consent(event=event, consent=False)
@@ -370,6 +372,7 @@ async def main(config, inp: Dict):
     async def set_default_phone_number(event):
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
+            return
 
         if inp[event.sender.id].consent is None:
             await event.reply('You did not set your data collecting consent.'
@@ -399,6 +402,7 @@ async def main(config, inp: Dict):
     async def set_default_phone_number(event):
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
+            return
 
         if inp[event.sender.id].consent is None:
             await event.reply('You did not set your data collecting consent.'
@@ -432,6 +436,7 @@ async def main(config, inp: Dict):
     async def set_geocheck(event):
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
+            return
 
         if inp[event.sender.id].consent is None:
             await event.reply('You did not set your data collecting consent.'
@@ -464,6 +469,7 @@ async def main(config, inp: Dict):
     async def set_airquality(event):
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
+            return
 
         if inp[event.sender.id].consent is None:
             await event.reply('You did not set your data collecting consent.'
@@ -496,6 +502,7 @@ async def main(config, inp: Dict):
     async def set_notifications(event):
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
+            return
 
         if inp[event.sender.id].consent is None:
             await event.reply('You did not set your data collecting consent.'
@@ -717,8 +724,10 @@ async def main(config, inp: Dict):
 
                     else:
                         inp[event.sender.id][phone_number].location_time_lock = True  # gotta do this in case someone would want to hit 'open compartment' button just on the edge, otherwise hitting 'yes' button could be davson-insensitive
-                        await convo.send_message('Less than 2 minutes have passed since the last compartment opening, '
-                                                 'skipping location verification.\nAre you sure to open?',
+                        await convo.send_message(f'Less than 2 minutes have passed since the last compartment opening, '
+                                                 f'you were in range of {p.pickup_point.name} parcel machine, '
+                                                 f'assuming you still are and skipping location verification.'
+                                                 f'\nAre you sure to open?',
                                                  buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
                 else:
                     await convo.send_message(f'You have location checking off or this parcel is in default parcel '

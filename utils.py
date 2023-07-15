@@ -2,7 +2,7 @@ from typing import List, Dict
 
 import arrow
 from inpost import Inpost
-from inpost.static import Parcel, ParcelShipmentType, ParcelStatus
+from inpost.static import Parcel, ParcelShipmentType, ParcelStatus, ParcelType
 from telethon import Button
 from telethon.events import NewMessage, CallbackQuery
 from telethon.tl.patched import Message
@@ -142,7 +142,7 @@ async def get_shipment_and_phone_number_from_button(event, inp):
     return shipment_number, phone_number
 
 
-async def send_pcg(event: NewMessage, inp: dict, phone_number: int, parcel_type):
+async def send_pcg(event: NewMessage, inp: dict, phone_number: int, parcel_type: ParcelType):
     package: Parcel = await inp[event.sender.id][phone_number].inpost.get_parcel(
         shipment_number=(await get_shipment_number(event)), parcel_type=parcel_type, parse=True)
 
@@ -165,7 +165,7 @@ async def send_pcg(event: NewMessage, inp: dict, phone_number: int, parcel_type)
         to_log = await inp[event.sender.id][phone_number].inpost.get_parcel(
             shipment_number=package.shipment_number, parcel_type=parcel_type, parse=False)
 
-        database.add_parcel(event=event, phone_number=phone_number, parcel=to_log)
+        database.add_parcel(event=event, phone_number=phone_number, ptype=parcel_type, parcel=to_log)
 
     match package.status:
         case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE:
@@ -222,7 +222,7 @@ async def send_pcgs(event, inp, status, phone_number, parcel_type):
                 to_log = await inp[event.sender.id][int(phone_number)].inpost.get_parcel(
                     shipment_number=package.shipment_number, parcel_type=parcel_type, parse=False)
 
-                database.add_parcel(event=event, phone_number=phone_number, parcel=to_log)
+                database.add_parcel(event=event, phone_number=phone_number, ptype=parcel_type, parcel=to_log)
 
             match package.status:
                 case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE | ParcelStatus.STACK_IN_CUSTOMER_SERVICE_POINT:
@@ -273,7 +273,12 @@ async def show_oc(event, inp, phone_number, shipment_number):
 async def open_comp(event, inp, phone_number, p: Parcel):
     p_ = await inp[event.sender.id][phone_number].inpost.collect(parcel_obj=p)
     if p_ is not None:
-        database.add_parcel(event=event, phone_number=phone_number, parcel=p_)
+        if inp[event.sender.id].consent:
+            to_log = await inp[event.sender.id][int(phone_number)].inpost.get_parcel(
+                shipment_number=p.shipment_number, parcel_type=ParcelType.TRACKED, parse=False)
+
+            database.add_parcel(event=event, phone_number=phone_number, ptype=ParcelType.TRACKED, parcel=to_log)
+
         return p_
 
     return None
