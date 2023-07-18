@@ -19,8 +19,8 @@ class BotUserPhoneNumberConfig:
         self.default_parcel_machine: str = kwargs['default_parcel_machine']
         self.geocheck: bool = kwargs['geocheck']
         self.airquality: bool = kwargs['airquality']
-        self.location: tuple | None = kwargs['location'] if 'location' in kwargs else None  # lat, long
-        self.location_time: arrow.arrow | None = kwargs['location_time'] if 'location_time' in kwargs else None
+        self.location: tuple | None = kwargs['location'] if 'location' in kwargs else (0, 0)  # lat, long
+        self.location_time: arrow.arrow | None = kwargs['location_time'] if 'location_time' in kwargs else arrow.get('2023')
         self.location_time_lock: bool = False
 
     @property
