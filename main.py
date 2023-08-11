@@ -1,153 +1,21 @@
 import asyncio
 import logging
-from typing import List, Dict
+from typing import Dict
 
+import arrow
 import yaml
-
+from inpost.static import ParcelStatus, ParcelType, PhoneNumberError, UnauthorizedError, UnidentifiedAPIError, \
+    NotAuthenticatedError, NotFoundError, ParcelTypeError, Parcel
 from telethon import TelegramClient, Button
 from telethon.events import NewMessage, CallbackQuery
+
 import database
-
-from inpost.static import ParcelStatus, ParcelShipmentType
-from inpost.static.exceptions import *
-from inpost.api import Inpost
-
-
-async def reply(event: NewMessage.Event | CallbackQuery.Event, text: str, alert=True):
-    if isinstance(event, CallbackQuery.Event):
-        await event.answer(text, alert=alert)
-    elif isinstance(event, NewMessage.Event):
-        await event.reply(text)
-
-
-async def send_pcgs(event, inp, status):
-    packages: List[Parcel] = await inp[event.sender.id].get_parcels(status=status, parse=True)
-    exclude = []
-    if len(packages) > 0:
-        for package in packages:
-            if package.shipment_number in exclude:
-                continue
-
-            if package.is_multicompartment and not package.is_main_multicompartment:
-                exclude.append(package.shipment_number)
-                continue
-
-            elif package.is_main_multicompartment:
-                packages: List[Parcel] = await inp[event.sender.id].get_multi_compartment(
-                    multi_uuid=package.multi_compartment.uuid, parse=True)
-                package = next((parcel for parcel in packages if parcel.is_main_multicompartment), None)
-                other = '\n'.join(f'📤 **Sender:** `{p.sender.sender_name}`\n'
-                                  f'📦 **Shipment number:** `{p.shipment_number}\n`' for p in packages if
-                                  not p.is_main_multicompartment)
-
-                message = f'⚠️ **THIS IS MULTICOMPARTMENT CONTAINING {len(packages)} PARCELS!** ⚠\n️\n' \
-                          f'📤 **Sender:** `{package.sender.sender_name}`\n' \
-                          f'📦 **Shipment number:** `{package.shipment_number}`\n' \
-                          f'📮 **Status:** `{package.status.value}`\n' \
-                          f'📥 **Pick up point:** `{package.pickup_point}, {package.pickup_point.city} ' \
-                          f'{package.pickup_point.street} {package.pickup_point.building_number}`\n\n' \
-                          f'Other parcels inside:\n{other}'
-
-            elif package.shipment_type == ParcelShipmentType.courier:
-                message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
-                          f'📦 **Shipment number:** `{package.shipment_number}`\n' \
-                          f'📮 **Status:** `{package.status.value}`\n'
-            else:
-                message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
-                          f'📦 **Shipment number:** `{package.shipment_number}`\n' \
-                          f'📮 **Status:** `{package.status.value}`\n' \
-                          f'📥 **Pick up point:** `{package.pickup_point}, {package.pickup_point.city} ' \
-                          f'{package.pickup_point.street} {package.pickup_point.building_number}`'
-
-            if package.status in (ParcelStatus.STACK_IN_BOX_MACHINE, ParcelStatus.STACK_IN_CUSTOMER_SERVICE_POINT):
-                message = f'⚠️ **PARCEL IS IN SUBSTITUTIONARY PICK UP POINT!** ⚠\n️\n' + message
-
-            match package.status:
-                case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE | ParcelStatus.STACK_IN_CUSTOMER_SERVICE_POINT:
-                    await event.reply(message + f'\n🫳 **Pick up until:** '
-                                                f'`{package.expiry_date.to("local").format("DD.MM.YYYY HH:mm")}`',
-                                      buttons=[
-                                          [Button.inline('Open Code'), Button.inline('QR Code')],
-                                          [Button.inline('Details'), Button.inline('Open Compartment')], ]
-                                      )
-                case _:
-                    await event.reply(message,
-                                      buttons=[Button.inline('Details'), ])
-
-    else:
-        if isinstance(event, CallbackQuery.Event):
-            await event.answer('No parcels with specified status!', alert=True)
-        elif isinstance(event, NewMessage.Event):
-            await event.reply('No parcels with specified status!')
-
-    return status
-
-
-async def send_qrc(event, inp, shipment_number):
-    p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
-    if p.status == ParcelStatus.READY_TO_PICKUP or p.status == ParcelStatus.STACK_IN_BOX_MACHINE:
-        await event.reply(file=p.generate_qr_image)
-    else:
-        await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
-
-
-async def show_oc(event, inp, shipment_number):
-    p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
-    if p.status == ParcelStatus.READY_TO_PICKUP or p.status == ParcelStatus.STACK_IN_BOX_MACHINE:
-        await event.answer(f'This parcel open code is: {p.open_code}', alert=True)
-    else:
-        await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
-
-
-async def open_comp(event, inp, p: Parcel):
-    await inp[event.sender.id].collect(parcel_obj=p)
-    await event.reply(
-        f'Compartment opened!\nLocation:\n   '
-        f'Side: {p.compartment_location.side}\n   '
-        f'Row: {p.compartment_location.row}\n   '
-        f'Column: {p.compartment_location.column}')
-
-
-async def send_details(event, inp, shipment_number):
-    parcel: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
-
-    if parcel.is_multicompartment:
-        parcels = await inp[event.sender.id].get_multi_compartment(multi_uuid=parcel.multi_compartment.uuid, parse=True)
-        message = ''
-
-        for p in parcels:
-            message = message + f'**Sender:** {p.sender}\n'
-            events = "\n".join(
-                f'{status.date.to("local").format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in
-                p.event_log)
-            if p.status == ParcelStatus.READY_TO_PICKUP or p.status == ParcelStatus.STACK_IN_BOX_MACHINE:
-                message = message + f'**Shipment number**: {p.shipment_number}\n' \
-                                    f'**Stored**: {p.stored_date.to("local").format("DD.MM.YYYY HH:mm")}\n' \
-                                    f'**Open code**: {p.open_code}\n' \
-                                    f'**Events**:\n{events}\n\n'
-
-            elif p.status == ParcelStatus.DELIVERED:
-                message = message + f'**Stored**: {p.stored_date.to("local").format("DD.MM.YYYY HH:mm")}\n' \
-                                    f'**Events**:\n{events}\n\n'
-            else:
-                message = message + f'**Events**:\n{events}\n\n'
-
-        await event.reply(message)
-    else:
-        events = "\n".join(
-            f'{status.date.to("local").format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in
-            parcel.event_log)
-        if parcel.status == ParcelStatus.READY_TO_PICKUP or parcel.status == ParcelStatus.STACK_IN_BOX_MACHINE:
-            await event.reply(f'**Stored**: {parcel.stored_date.to("local").format("DD.MM.YYYY HH:mm")}\n'
-                              f'**Open code**: {parcel.open_code}\n'
-                              f'**Events**:\n{events}'
-                              )
-        elif parcel.status == ParcelStatus.DELIVERED:
-            await event.reply(f'**Picked up**: {parcel.pickup_date.to("local").format("DD.MM.YYYY HH:mm")}\n'
-                              f'**Events**:\n{events}'
-                              )
-        else:
-            await event.reply(f'**Events**:\n{events}')
+from constants import pending_statuses, welcome_message, friend_invitations_message_builder, \
+    out_of_range_message_builder, open_comp_message_builder, use_command_as_reply_message_builder, \
+    not_enough_parameters_provided
+from utils import get_shipment_and_phone_number_from_button, send_pcgs, send_qrc, show_oc, open_comp, \
+    send_details, BotUserPhoneNumberConfig, BotUserConfig, send_pcg, init_phone_number, confirm_location, \
+    get_shipment_and_phone_number_from_reply, is_parcel_owner
 
 
 async def main(config, inp: Dict):
@@ -159,67 +27,270 @@ async def main(config, inp: Dict):
     if not config['bot_token']:
         raise Exception('No bot token provided')
 
-    data = database.get_dict()
-    for d in data:
-        inp[d] = Inpost()
-        await inp[d].set_phone_number(data[d]['phone_number'])
-        inp[d].sms_code = data[d]['sms_code']
-        inp[d].refr_token = data[d]['refr_token']
-        inp[d].auth_token = data[d]['auth_token']
+    users = database.get_dict()
+
+    inp = {user: BotUserConfig(default_phone_number=database.get_default_phone_number(userid=user).phone_number,
+                               consent=database.get_user_consent(userid=user),
+                               phone_numbers=users[user]) for user in users}
 
     await client.start(bot_token=config['bot_token'])
     print("Started")
 
+    @client.on(NewMessage(pattern='/me'))
+    async def get_me(event):
+        if event.sender.id not in inp:
+            await event.reply('You are not initialized')
+            return
+
+        for phone_number in inp[event.sender.id].phone_numbers.values():
+            await event.reply(
+                f'**Phone number**: `{str(phone_number.phone_number)[:3] + "***" + str(phone_number.phone_number)[6:]}`'
+                f'\n**Default parcel machine**: `{phone_number.default_parcel_machine if phone_number.default_parcel_machine != "" else "Not set"}`'
+                f'\n**Notifications**: `{phone_number.notifications}`'
+                f'\n**Geo checking**: `{phone_number.geocheck}`'
+                f'\n**Air quality**: `{phone_number.airquality}`')
+
+    @client.on(NewMessage(func=lambda e: e.text.startswith('/init') or e.message.contact is not None))
+    async def init_user(event):
+        async with client.conversation(event.sender.id) as convo:
+            phone_number = await init_phone_number(event=event)
+            try:
+                if phone_number is None:
+                    await convo.send_message(
+                        'Something is wrong with provided phone number. Start initialization again.',
+                        buttons=Button.clear())
+                    convo.cancel()
+                    return
+
+                if event.sender.id not in inp:
+                    inp.update({event.sender.id: BotUserConfig()})
+                    database.add_user(event=event)
+
+                if database.phone_number_exists(phone_number=phone_number):
+                    if phone_number in inp[event.sender.id]:
+                        await convo.send_message(
+                            'You have initialized this phone number before, do you want to do it again? '
+                            'All defaults remains!', buttons=[Button.inline('Do it'), Button.inline('Cancel')])
+                        resp = await convo.wait_event(CallbackQuery())
+
+                        match resp.data:
+                            case b'Do it':
+                                await resp.reply('Fine, moving on to sending sms code!')
+                            case b'Cancel':
+                                await resp.reply('Fine, cancelling!')
+                                convo.cancel()
+                                return
+
+                    else:
+                        await convo.send_message("Phone number already exist and you are not it's owner, cancelling!",
+                                                 buttons=Button.clear())
+                        convo.cancel()
+                        return
+
+                else:
+                    inp[event.sender.id].phone_numbers.update({phone_number: BotUserPhoneNumberConfig(**{
+                        'airquality': True,
+                        'default_parcel_machine': None,
+                        'geocheck': True,
+                        'notifications': True,
+                        'phone_number': phone_number})})
+
+                    database.add_phone_number_config(event=event, phone_number=phone_number)
+
+                    if len(inp[event.sender.id].phone_numbers) == 1:
+                        inp[event.sender.id].default_phone_number = phone_number
+                        database.edit_default_phone_number(event=event, default_phone_number=phone_number)
+
+                if not await inp[event.sender.id][phone_number].inpost.send_sms_code():
+                    await convo.send_message('Could not send sms code! Start initializing again!',
+                                             buttons=Button.clear())
+                    return
+
+                await convo.send_message('Phone number accepted, send me sms code that InPost '
+                                         'sent to provided phone number! You have 60 seconds from now!',
+                                         buttons=Button.clear())
+                sms_code = await convo.get_response(timeout=60)
+
+                if not (len(sms_code.text.strip()) == 6 and sms_code.text.strip().isdigit()):
+                    await convo.send_message(
+                        'Something is wrong with provided sms code! Start initialization again.',
+                        buttons=Button.clear())
+                    return
+
+                if not await inp[event.sender.id][phone_number].inpost.confirm_sms_code(
+                        sms_code=sms_code.text.strip()):
+                    await convo.send_message('Something went wrong! Start initialization again.',
+                                             buttons=Button.clear())
+                    return
+
+                database.edit_phone_number_config(event=event,
+                                                  phone_number=phone_number,
+                                                  sms_code=sms_code.text.strip(),
+                                                  refr_token=inp[event.sender.id][phone_number].inpost.refr_token,
+                                                  auth_token=inp[event.sender.id][phone_number].inpost.auth_token)
+                await convo.send_message(
+                    f'Congrats, you have successfully verified yourself. '
+                    f'If this was your first time, {phone_number} is now your default one, '
+                    f'if you want to change your current one to this just send `/set_default_phone_number {phone_number}`!'
+                    f'\n\nHave fun using InPost services there!', buttons=Button.clear())
+                return
+
+            except asyncio.TimeoutError as e:
+                logger.exception(e)
+                await convo.send_message('Time has ran out, start initialization again!')
+                convo.cancel()
+            except PhoneNumberError as e:
+                logger.exception(e)
+                await convo.send_message(e.reason)
+            except UnauthorizedError as e:
+                logger.exception(e)
+                await convo.send_message('You are not authorized')
+            except UnidentifiedAPIError as e:
+                logger.exception(e)
+                await convo.send_message('Unexpected error occurred, call admin')
+            except Exception as e:
+                logger.exception(e)
+                await convo.send_message('Bad things happened, call admin now!')
+
     @client.on(NewMessage(pattern='/start'))
+    @client.on(NewMessage(pattern='/help'))
     async def start(event):
-        await event.reply('Hello!\nThis is a bot helping you to manage your InPost parcels!\n'
-                          'If you want to contribute to Inpost development you can find us there: '
-                          '[Inpost](https://github.com/IFOSSA/inpost-python)\n\n'
-                          'Log in using button that just shown up below the text box '
-                          'or by typing `/init <phone_number>`!\n\n'
-                          '**List of commands:**\n'
-                          '/start - display start message and allow user to login with Telegram\n'
-                          '/init - login using phone number `/init <phone_number>`\n'
-                          '/confirm - confirm login with sms code `/confirm <sms_code>`\n'
-                          '/refresh - refresh authorization token\n'
-                          '/pending - return pending parcels\n'
-                          '/delivered - return delivered parcels\n'
-                          '/parcel - return parcel `/parcel <shipment_number>`\n'
-                          '/friends - list all known inpost friends \n'
-                          '/share <reply to parcel message> - share parcel to listed friend\n'
-                          '/all - return all available parcels\n'
-                          '/clear - if you accidentally invoked `/start` and annoying box sprang up',
-                          buttons=[Button.request_phone('Log in via Telegram')])
+        await event.reply(welcome_message, buttons=[Button.request_phone('Log in via Telegram')])
 
-    @client.on(NewMessage())
-    async def init(event):
-        if event.message.contact:  # first check if NewMessage contains contact field
-            phone_number = event.message.contact.phone_number[-9:]  # cut the region part, 9 last digits
-        elif not event.text.startswith('/init'):  # then check if starts with /init, if so proceed
-            return
-        elif len(event.text.split(' ')) == 2:
-            phone_number = event.text.split()[1].strip()
-        else:
-            await event.reply('Something is wrong with provided phone number')
+    @client.on(NewMessage(pattern='/clear'))
+    async def clear(event):
+        await event.reply('You are welcome :D', buttons=Button.clear())
+
+    @client.on(NewMessage(pattern='/parcel'))
+    async def get_parcel(event):
+        if event.sender.id not in inp:
+            await event.reply('You are not initialized')
             return
 
-        if event.sender.id in inp:
-            del inp[event.sender.id]
-            database.delete_user(event=event)
-            await event.reply('You were initialized before, reinitializing')
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
+        match len(event.text.strip().split(' ')):
+            case 2:
+                phone_number = inp[event.sender.id].default_phone_number.phone_number
+            case 3:
+                phone_number = inp[event.sender.id][event.text.strip().split(' ')[1].strip()].inpost.phone_number
+            case _:
+                await event.reply(not_enough_parameters_provided)
+                return
 
         try:
-            inp[event.sender.id] = Inpost()
-            await inp[event.sender.id].set_phone_number(phone_number=phone_number)
-            if await inp[event.sender.id].send_sms_code():
-                database.add_user(event=event, phone_number=phone_number)
-                await event.reply(f'Initialized with phone number: {inp[event.sender.id].phone_number}!'
-                                  f'\nSending sms code!', buttons=Button.clear())
+            await send_pcg(event, inp, phone_number, ParcelType.TRACKED)
 
-        except PhoneNumberError as e:
+        except NotAuthenticatedError as e:
+            logger.exception(e)
             await event.reply(e.reason)
-        except UnauthorizedError:
-            await event.reply('You are not authorized')
+        except UnauthorizedError as e:
+            logger.exception(e)
+            await event.reply('You are not authorized, initialize first!')
+        except NotFoundError as e:
+            logger.exception(e)
+            await event.reply('This parcel does not exist or does not belong to you!')
+        except UnidentifiedAPIError as e:
+            logger.exception(e)
+            await event.reply('Unexpected exception occurred, call admin')
+        except Exception as e:
+            logger.exception(e)
+            await event.reply('Bad things happened, call admin now!')
+
+    @client.on(NewMessage(pattern='/pending'))
+    @client.on(NewMessage(pattern='/delivered'))
+    @client.on(NewMessage(pattern='/all'))
+    @client.on(NewMessage(pattern='/sent'))
+    @client.on(NewMessage(pattern='/returns'))
+    @client.on(CallbackQuery(pattern=b'Pending Parcels'))
+    @client.on(CallbackQuery(pattern=b'Delivered Parcels'))
+    async def get_packages(event):
+        if event.sender.id not in inp:
+            await event.reply('You are not initialized')
+            return
+
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
+        status = None
+        parcel_type = None
+
+        match event:
+            case CallbackQuery.Event():
+                phone_number = inp[event.sender.id].default_phone_number.phone_number
+                if phone_number is None:
+                    await event.reply(f'Buttons works only with default phone number. '
+                                      f'Please set up one before using them or type following command: '
+                                      f'\n`/set_default_phone_number <phone_number>')
+                    return
+
+                if event.data == b'Pending Parcels':
+                    status = pending_statuses
+                    parcel_type = ParcelType.TRACKED
+                elif event.data == b'Delivered Parcels':
+                    status = ParcelStatus.DELIVERED
+                    parcel_type = ParcelType.TRACKED
+
+            case NewMessage.Event():
+                if '/pending' in event.text:
+                    status = pending_statuses
+                    parcel_type = ParcelType.TRACKED
+                elif '/delivered' in event.text:
+                    status = ParcelStatus.DELIVERED
+                    parcel_type = ParcelType.TRACKED
+                elif '/all' in event.text:
+                    status = None
+                    parcel_type = ParcelType.TRACKED
+                elif '/sent' in event.text:
+                    status = None
+                    parcel_type = ParcelType.SENT
+                elif '/returns' in event.text:
+                    status = None
+                    parcel_type = ParcelType.RETURNS
+                else:
+                    return
+
+                match len(event.text.strip().split(' ')):
+                    case 1:
+                        phone_number = inp[event.sender.id].default_phone_number.phone_number
+                    case 2:
+                        phone_number = inp[event.sender.id][
+                            event.text.strip().split(' ')[1].strip()].inpost.phone_number
+                    case _:
+                        await event.reply(not_enough_parameters_provided)
+                        return
+
+                if phone_number is None:
+                    await event.reply('This phone number does not exist or does not belong to you!')
+                    return
+
+            case _:
+                logger.warning('Obtained other type of event than expected')
+                await event.reply('Bad things happened, call admin now!')
+                return
+
+        try:
+            await send_pcgs(event, inp, status, phone_number, parcel_type)
+
+        except (NotAuthenticatedError, ParcelTypeError) as e:
+            logger.exception(e)
+            await event.reply(e.reason)
+        except UnauthorizedError as e:
+            logger.exception(e)
+            await event.reply('You are not authorized, initialize first!')
+        except NotFoundError:
+            await event.reply('No parcels found!')
         except UnidentifiedAPIError as e:
             logger.exception(e)
             await event.reply('Unexpected error occurred, call admin')
@@ -227,278 +298,291 @@ async def main(config, inp: Dict):
             logger.exception(e)
             await event.reply('Bad things happened, call admin now!')
 
-    @client.on(NewMessage(pattern='/confirm'))
-    async def confirm_sms(event):
-        if event.sender.id in inp and len(event.text.split()) == 2:
-            try:
-                if await inp[event.sender.id].confirm_sms_code(event.text.split()[1].strip()):
-                    database.edit_user(event=event,
-                                       sms_code=event.text.split()[1].strip(),
-                                       refr_token=inp[event.sender.id].refr_token,
-                                       auth_token=inp[event.sender.id].auth_token)
-
-                    await event.reply(f'Succesfully verifed!', buttons=[Button.inline('Pending Parcels'),
-                                                                        Button.inline('Delivered Parcels')])
-                else:
-                    await event.reply('Could not confirm sms code!')
-
-            except PhoneNumberError as e:
-                await event.reply(e.reason)
-            except SmsCodeError as e:
-                await event.reply(e.reason)
-            except UnauthorizedError:
-                await event.reply('You are not authorized, initialize first!')
-            except UnidentifiedAPIError as e:
-                logger.exception(e)
-                await event.reply('Unexpected error occurred, call admin')
-            except Exception as e:
-                logger.exception(e)
-                await event.reply('Bad things happened, call admin now!')
-        else:
-            await event.reply('No sms code provided or not initialized')
-
-    @client.on(NewMessage(pattern='/clear'))
-    async def clear(event):
-        await event.reply('You are welcome :D', buttons=Button.clear())
-
-    @client.on(NewMessage(pattern='/refresh'))
-    async def refresh_token(event):
-        if event.sender.id in inp:
-            try:
-                if await inp[event.sender.id].refresh_token():
-                    database.edit_user(event=event, refr_token=inp[event.sender.id].refr_token)
-                    await event.reply('Token refreshed!')
-                else:
-                    await event.reply('Could not refresh token')
-            except RefreshTokenError as e:
-                await event.reply(e.reason)
-            except UnauthorizedError:
-                await event.reply('You are not authorized, initialize again')
-            except UnidentifiedAPIError as e:
-                logger.exception(e)
-                await event.reply('Unexpected error occurred, call admin')
-            except Exception as e:
-                logger.exception(e)
-                await event.reply('Bad things happened, call admin now!')
-
-    @client.on(NewMessage(pattern='/parcel'))
-    async def get_parcel(event):
-        if event.sender.id in inp and len(event.text.split(' ')) == 2:
-            try:
-                package: Parcel = await inp[event.sender.id].get_parcel(
-                    shipment_number=
-                    (next((data for data in event.raw_text.split('\n') if 'Shipment number' in data))).split(':')[
-                        1].strip(),
-                    parse=True)
-
-                if package.is_multicompartment:
-                    packages: List[Parcel] = await inp[event.sender.id].get_multi_compartment(
-                        multi_uuid=package.multi_compartment.uuid, parse=True)
-                    package = next((parcel for parcel in packages if parcel.is_main_multicompartment), None)
-                    other = '\n'.join(f'📤 **Sender:** `{p.sender.sender_name}`\n'
-                                      f'📦 **Shipment number:** `{p.shipment_number}`' for p in packages if
-                                      not p.is_main_multicompartment)
-
-                    message = f'⚠️ **THIS IS MULTICOMPARTMENT CONTAINING {len(packages)} PARCELS!** ⚠\n️\n' \
-                              f'📤 **Sender:** `{package.sender.sender_name}`\n' \
-                              f'📦 **Shipment number:** `{package.shipment_number}`\n' \
-                              f'📮 **Status:** `{package.status.value}`\n' \
-                              f'📥 **Pick up point:** `{package.pickup_point}, {package.pickup_point.city} ' \
-                              f'{package.pickup_point.street} {package.pickup_point.building_number}`\n\n' \
-                              f'Other parcels inside:\n{other}'
-                else:
-                    message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
-                              f'📦 **Shipment number:** `{package.shipment_number}`\n' \
-                              f'📮 **Status:** `{package.status.value}`\n' \
-                              f'📥 **Pick up point:** `{package.pickup_point}, {package.pickup_point.city} ' \
-                              f'{package.pickup_point.street} {package.pickup_point.building_number}`'
-
-                match package.status:
-                    case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE:
-                        await event.reply(message,
-                                          buttons=[
-                                              [Button.inline('Open Code'), Button.inline('QR Code')],
-                                              [Button.inline('Details'), Button.inline('Open Compartment')]
-                                          ]
-                                          )
-                    case _:
-                        await event.reply(message,
-                                          buttons=[Button.inline('Details')])
-
-            except NotAuthenticatedError as e:
-                await event.reply(e.reason)
-            except UnauthorizedError:
-                if await inp[event.sender.id].refresh_token():
-                    try:
-                        package: Parcel = await inp[event.sender.id].get_parcel(
-                            shipment_number=
-                            (next((data for data in event.raw_text.split('\n') if 'Shipment number' in data))).split(
-                                ':')[1].strip(),
-                            parse=True)
-
-                        if package.is_multicompartment:
-                            packages: List[Parcel] = await inp[event.sender.id].get_multi_compartment(
-                                multi_uuid=package.multi_compartment.uuid, parse=True)
-                            package = next((parcel for parcel in packages if parcel.is_main_multicompartment), None)
-                            other = '\n'.join(f'📤 **Sender:** `{p.sender.sender_name}`\n'
-                                              f'📦 **Shipment number:** `{p.shipment_number}`' for p in packages if
-                                              not p.is_main_multicompartment)
-
-                            message = f'⚠️ **THIS IS MULTICOMPARTMENT CONTAINING {len(packages)} PARCELS!** ⚠\n️\n' \
-                                      f'📤 **Sender:** `{package.sender.sender_name}`\n' \
-                                      f'📦 **Shipment number:** `{package.shipment_number}`\n' \
-                                      f'📮 **Status:** `{package.status.value}`\n' \
-                                      f'📥 **Pick up point:** `{package.pickup_point}, {package.pickup_point.city} ' \
-                                      f'{package.pickup_point.street} {package.pickup_point.building_number}`\n\n' \
-                                      f'Other parcels inside:\n{other}'
-                        else:
-                            message = f'📤 **Sender:** `{package.sender.sender_name}`\n' \
-                                      f'📦 **Shipment number:** `{package.shipment_number}`\n' \
-                                      f'📮 **Status:** `{package.status.value}`\n' \
-                                      f'📥 **Pick up point:** `{package.pickup_point}, {package.pickup_point.city} ' \
-                                      f'{package.pickup_point.street} {package.pickup_point.building_number}`'
-
-                        match package.status:
-                            case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE:
-                                await event.reply(message,
-                                                  buttons=[
-                                                      [Button.inline('Open Code'), Button.inline('QR Code')],
-                                                      [Button.inline('Details'), Button.inline('Open Compartment')]
-                                                  ]
-                                                  )
-                            case _:
-                                await event.reply(message,
-                                                  buttons=[Button.inline('Details')])
-
-                    except NotFoundError:
-                        await event.reply('This parcel does not exist or does not belong to you!')
-                    except Exception as e:
-                        logger.exception(e)
-                        await event.reply('Bad things happened, call admin now!')
-                else:
-                    await event.reply('You are not authorized, initialize first!')
-            except NotFoundError as e:
-                logger.exception(e)
-                await event.reply('This parcel does not exist or does not belong to you!')
-            except UnidentifiedAPIError as e:
-                logger.exception(e)
-                await event.reply('Unexpected exception occurred, call admin')
-            except Exception as e:
-                logger.exception(e)
-                await event.reply('Bad things happened, call admin now!')
-        else:
-            await event.reply('No shipment number provided or not initialized')
-
-    @client.on(NewMessage(pattern='/pending'))
-    @client.on(NewMessage(pattern='/delivered'))
-    @client.on(NewMessage(pattern='/all'))
-    @client.on(CallbackQuery(pattern=b'Pending Parcels'))
-    @client.on(CallbackQuery(pattern=b'Delivered Parcels'))
-    async def get_packages(event):
-        if event.sender.id in inp:
-            status = None
-            if isinstance(event, CallbackQuery.Event):
-                if event.data == b'Pending Parcels':
-                    status = [ParcelStatus.READY_TO_PICKUP, ParcelStatus.CONFIRMED,
-                              ParcelStatus.ADOPTED_AT_SORTING_CENTER, ParcelStatus.ADOPTED_AT_SOURCE_BRANCH,
-                              ParcelStatus.COLLECTED_FROM_SENDER, ParcelStatus.DISPATCHED_BY_SENDER,
-                              ParcelStatus.DISPATCHED_BY_SENDER_TO_POK, ParcelStatus.OUT_FOR_DELIVERY,
-                              ParcelStatus.OUT_FOR_DELIVERY_TO_ADDRESS, ParcelStatus.SENT_FROM_SOURCE_BRANCH,
-                              ParcelStatus.TAKEN_BY_COURIER, ParcelStatus.TAKEN_BY_COURIER_FROM_POK,
-                              ParcelStatus.STACK_IN_BOX_MACHINE, ParcelStatus.STACK_IN_CUSTOMER_SERVICE_POINT]
-                elif event.data == b'Delivered Parcels':
-                    status = ParcelStatus.DELIVERED
-            elif isinstance(event, NewMessage.Event):
-                if event.text == '/pending':
-                    status = [ParcelStatus.READY_TO_PICKUP, ParcelStatus.CONFIRMED,
-                              ParcelStatus.ADOPTED_AT_SORTING_CENTER, ParcelStatus.ADOPTED_AT_SOURCE_BRANCH,
-                              ParcelStatus.COLLECTED_FROM_SENDER, ParcelStatus.DISPATCHED_BY_SENDER,
-                              ParcelStatus.DISPATCHED_BY_SENDER_TO_POK, ParcelStatus.OUT_FOR_DELIVERY,
-                              ParcelStatus.OUT_FOR_DELIVERY_TO_ADDRESS, ParcelStatus.SENT_FROM_SOURCE_BRANCH,
-                              ParcelStatus.TAKEN_BY_COURIER, ParcelStatus.TAKEN_BY_COURIER_FROM_POK,
-                              ParcelStatus.STACK_IN_BOX_MACHINE, ParcelStatus.STACK_IN_CUSTOMER_SERVICE_POINT]
-                elif event.text == '/delivered':
-                    status = ParcelStatus.DELIVERED
-                elif event.text == '/all':
-                    status = None
-                else:
-                    return
-
-            try:
-                await send_pcgs(event, inp, status)
-
-            except NotAuthenticatedError as e:
-                await event.reply(e.reason)
-            except ParcelTypeError as e:
-                await event.reply(e.reason)
-            except UnauthorizedError:
-                if await inp[event.sender.id].refresh_token():
-                    try:
-                        await send_pcgs(event, inp, status)
-
-                    except Exception as e:
-                        logger.exception(e)
-                        await event.reply('Bad things happened, call admin now!')
-                else:
-                    await event.reply('You are not authorized, initialize first!')
-
-            except NotFoundError:
-                await event.reply('No parcels found!')
-            except UnidentifiedAPIError as e:
-                logger.exception(e)
-                await event.reply('Unexpected error occurred, call admin')
-            except Exception as e:
-                logger.exception(e)
-                await event.reply('Bad things happened, call admin now!')
-
-        else:
-            await event.reply('You are not initialized')
-
     @client.on(NewMessage(pattern='/friends'))
     async def send_friends(event):
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
+            return
+
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
+        async with client.conversation(event.sender.id) as convo:
+            match len(event.text.strip().split(' ')):
+                case 1:
+                    phone_number = inp[event.sender.id].default_phone_number.phone_number
+                case 2:
+                    phone_number = inp[event.sender.id][event.text.strip().split(' ')[1].strip()].inpost.phone_number
+                case _:
+                    await event.reply(not_enough_parameters_provided)
+                    return
+
+            try:
+                friends = await inp[event.sender.id][int(phone_number)].inpost.get_friends()
+                for f in friends['friends']:
+                    await convo.send_message(f'**Name**: {f["name"]}\n'
+                                             f'**Phone number**: {f["phoneNumber"]}',
+                                             buttons=[Button.inline('Remove')])  # TODO: implement
+
+                for i in friends['invitations']:
+                    await convo.send_message(friend_invitations_message_builder(friend=i),
+                                             buttons=[Button.inline('Accept')])  # TODO: implement
+
+            except asyncio.TimeoutError as e:
+                logger.exception(e)
+                await convo.send_message('Time has ran out, start initialization again!')
+                convo.cancel()
+            except PhoneNumberError as e:
+                logger.exception(e)
+                await convo.send_message(e.reason)
+            except UnauthorizedError as e:
+                logger.exception(e)
+                await convo.send_message('You are not authorized')
+            except UnidentifiedAPIError as e:
+                logger.exception(e)
+                await convo.send_message('Unexpected error occurred, call admin')
+            except Exception as e:
+                logger.exception(e)
+                await convo.send_message('Bad things happened, call admin now!')
+
+    @client.on(NewMessage(pattern='/consent'))
+    async def consent(event):
+        if event.sender.id not in inp:
+            await event.reply('You are not initialized')
+            return
+
+        if event.text[-2:] == 'no':
+            database.set_user_consent(event=event, consent=False)
+            inp[event.sender.id].consent = False
+            await event.reply(f'Your data will not be collected from this moment. '
+                              f'Anytime you change your mind just type\n\n`/consent yes`.')
+        elif event.text[-3:] == 'yes':
+            database.set_user_consent(event=event, consent=True)
+            inp[event.sender.id].consent = True
+            await event.reply(f'Your data will be collected from this moment.')
+        else:
+            await event.reply('Please specify your answer, available options are `yes` and `no`')
+
+    @client.on(NewMessage(pattern='/set_default_phone_number'))
+    async def set_default_phone_number(event):
+        if event.sender.id not in inp:
+            await event.reply('You are not initialized')
+            return
+
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
+        msg = event.text.strip().split(' ')
+
+        match len(msg):
+            case 2:
+                if not msg[1].strip().isdigit() or len(msg[1].strip()) != 9:
+                    await event.reply("Provided phone number contains non digit characters or is not 9 digits long")
+                    return
+
+                phone_number = int(msg[1].strip())
+                database.edit_default_phone_number(event=event, default_phone_number=phone_number)
+                inp[event.sender.id].default_phone_number = phone_number
+                await event.reply(f'Default phone number is set to {phone_number}!')
+            case _:
+                await event.reply(not_enough_parameters_provided)
+                return
+
+    @client.on(NewMessage(pattern='/set_default_parcel_machine'))
+    async def set_default_phone_number(event):
+        if event.sender.id not in inp:
+            await event.reply('You are not initialized')
+            return
+
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
+        msg = event.text.strip().split(' ')
+
+        match len(msg):
+            case 2:
+                phone_number = inp[event.sender.id].default_phone_number.phone_number
+                default_parcel_machine = msg[1].strip().upper()
+            case 3:
+                phone_number = inp[event.sender.id][event.text.strip().split(' ')[1].strip()].inpost.phone_number
+                default_parcel_machine = msg[2].strip().upper()
+            case _:
+                await event.reply(not_enough_parameters_provided)
+                return
+
+        database.edit_default_parcel_machine(event=event, phone_number=phone_number,
+                                             default_parcel_machine=default_parcel_machine)
+        inp[event.sender.id][int(phone_number)].default_parcel_machine = default_parcel_machine
+        await event.reply(f'Default parcel machine is set to {default_parcel_machine}! Remember, there is no '
+                          f'verification to provided parcel machine code, so if typed incorrectly it just will not '
+                          f'work!')
+
+    @client.on(NewMessage(pattern='/set_geocheck'))
+    async def set_geocheck(event):
+        if event.sender.id not in inp:
+            await event.reply('You are not initialized')
+            return
+
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
+        msg = event.text.strip().split(' ')
+
+        match len(msg):
+            case 2:
+                phone_number = inp[event.sender.id].default_phone_number.phone_number
+                geocheck = True if msg[1].strip().lower() == 'on' else False
+            case 3:
+                phone_number = inp[event.sender.id][event.text.strip().split(' ')[1].strip()].inpost.phone_number
+                geocheck = True if msg[2].strip().lower() == 'on' else False
+            case _:
+                await event.reply(not_enough_parameters_provided)
+                return
+
+        database.edit_phone_number_config(event=event,
+                                          phone_number=phone_number,
+                                          geocheck=geocheck)
+        inp[event.sender.id][int(phone_number)].geocheck = geocheck
+        await event.reply('Geo checking is set!')
+
+    @client.on(NewMessage(pattern='/set_airquality'))
+    async def set_airquality(event):
+        if event.sender.id not in inp:
+            await event.reply('You are not initialized')
+            return
+
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
+        msg = event.text.strip().split(' ')
+
+        match len(msg):
+            case 2:
+                phone_number = inp[event.sender.id].default_phone_number.phone_number
+                airquality = True if msg[1].strip().lower() == 'on' else False
+            case 3:
+                phone_number = inp[event.sender.id][event.text.strip().split(' ')[1].strip()].inpost.phone_number
+                airquality = True if msg[2].strip().lower() == 'on' else False
+            case _:
+                await event.reply(not_enough_parameters_provided)
+                return
+
+        database.edit_phone_number_config(event=event,
+                                          phone_number=phone_number,
+                                          airquality=airquality)
+        inp[event.sender.id][int(phone_number)].airquality = airquality
+        await event.reply('Airquality is set!')
+
+    @client.on(NewMessage(pattern='/set_notifications'))
+    async def set_notifications(event):
+        if event.sender.id not in inp:
+            await event.reply('You are not initialized')
+            return
+
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
+        msg = event.text.strip().split(' ')[1].strip()
+
+        match len(event.text.strip().split(' ')):
+            case 2:
+                phone_number = inp[event.sender.id].default_phone_number.phone_number
+                notifications = True if msg.lower() == 'on' else False
+            case 3:
+                phone_number = inp[event.sender.id][int(event.text.strip().split(' ')[1].strip())].inpost.phone_number
+                notifications = True if msg.lower() == 'on' else False
+            case _:
+                await event.reply(not_enough_parameters_provided)
+                return
+
+        database.edit_phone_number_config(event=event,
+                                          phone_number=phone_number,
+                                          notifications=notifications)
+        inp[event.sender.id][int(phone_number)].notifications = notifications
+        await event.reply(f'Notifications are set to {msg.upper()}!')
+
+    @client.on(NewMessage(pattern='/qrcode'))
+    @client.on(CallbackQuery(pattern=b'QR Code'))
+    async def send_qr_code(event):
+        # TODO: Add database qr code get if user consent
+        if event.sender.id not in inp:
+            await event.reply('You are not initialized')
+            return
+
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
+        match event:
+            case NewMessage.Event():
+                if not event.message.is_reply:
+                    await event.reply('You must reply to message with desired parcel!')
+                    return
+
+                shipment_number, phone_number = await get_shipment_and_phone_number_from_reply(event, inp)
+
+                if phone_number is None:
+                    await event.reply('This phone number does not exist or does not belong to you!')
+                    return
+
+            case CallbackQuery.Event():
+                if inp[event.sender.id].default_phone_number is None:
+                    await event.reply(use_command_as_reply_message_builder("/qrcode"))
+                    return
+
+                shipment_number, phone_number = await get_shipment_and_phone_number_from_button(event, inp)
+            case _:
+                logger.warning('Obtained other type of event than expected')
+                await event.reply('Bad things happened, call admin now!')
+                return
+
+        if shipment_number is None:
+            await event.reply('No shipment number!')
+            return
 
         try:
-            friends = await inp[event.sender.id].get_friends()
-            for f in friends['friends']:
-                await event.reply(f'**Name**: {f["name"]}\n'
-                                  f'**Phone number**: {f["phoneNumber"]}',
-                                  buttons=[Button.inline('Remove')])
+            await send_qrc(event, inp, phone_number, shipment_number)
 
-            for i in friends['invitations']:
-                await event.reply(f'**Name**: {i["friend"]["name"]}\n'
-                                  f'**Phone number**: {i["friend"]["phoneNumber"]}\n'
-                                  f'**Invitation code**: `{i["invitationCode"]}`\n'
-                                  f'**Expiry date**: {i["expiryDate"]}',
-                                  buttons=[Button.inline('Remove')])
-
-        except NotAuthenticatedError as e:
+        except (NotAuthenticatedError, ParcelTypeError) as e:
+            logger.exception(e)
             await event.reply(e.reason)
-        except ParcelTypeError as e:
-            await event.reply(e.reason)
-        except UnauthorizedError:
-            if await inp[event.sender.id].refresh_token():
-                try:
-                    friends = await inp[event.sender.id].get_friends()
-                    for f in friends['friends']:
-                        await event.reply(f'**Name**: {f["name"]}\n'
-                                          f'**Phone number**: {f["phoneNumber"]}',
-                                          buttons=[Button.inline('Remove')])
-
-                    for i in friends['invitations']:
-                        await event.reply(f'**Name**: {i["friend"]["name"]}\n'
-                                          f'**Phone number**: {i["friend"]["phoneNumber"]}\n'
-                                          f'**Invitation code**: `{i["invitationCode"]}`\n'
-                                          f'**Expiry date**: {i["expiryDate"]}',
-                                          buttons=[Button.inline('Remove')])
-
-                except Exception as e:
-                    logger.exception(e)
-                    await event.reply('Bad things happened, call admin now!')
-            else:
-                await event.reply('You are not authorized, initialize first!')
-
+        except UnauthorizedError as e:
+            logger.exception(e)
+            await event.reply('You are not authorized, initialize first!')
         except NotFoundError:
             await event.reply('Parcel not found!')
         except UnidentifiedAPIError as e:
@@ -508,278 +592,346 @@ async def main(config, inp: Dict):
             logger.exception(e)
             await event.reply('Bad things happened, call admin now!')
 
-    @client.on(NewMessage(pattern='/share'))
-    async def share_to_friend(event):
+    @client.on(CallbackQuery(pattern=b'Open Code'))
+    @client.on(NewMessage(pattern='/opencode'))
+    async def show_open_code(event):
+        # TODO: Add database open code get if user consent
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
+            return
 
-        if not event.message.is_reply:
-            await event.reply('Wrong parcel to share!')
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
+        match event:
+            case NewMessage.Event():
+                if not event.message.is_reply:
+                    await event.reply('You must reply to message with desired parcel!')
+                    return
+
+                shipment_number, phone_number = await get_shipment_and_phone_number_from_reply(event, inp)
+
+                if phone_number is None:
+                    await event.reply('This phone number does not exist or does not belong to you!')
+                    return
+
+            case CallbackQuery.Event():
+                if inp[event.sender.id].default_phone_number is None:
+                    await event.reply(use_command_as_reply_message_builder("/opencode"))
+                    return
+                shipment_number, phone_number = await get_shipment_and_phone_number_from_button(event, inp)
+            case _:
+                logger.warning('Obtained other type of event than expected')
+                await event.reply('Bad things happened, call admin now!')
+                return
+
+        if shipment_number is None:
+            await event.reply('No shipment number!')
+            return
 
         try:
-            msg = await event.get_reply_message()
-            shipment_number = \
-                (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[
-                    1].strip()
-
-            friends = await inp[event.sender.id].get_parcel_friends(shipment_number=shipment_number, parse=True)
-
-            for f in friends['friends']:
-                await event.reply(f'**Name**: {f.name}\n'
-                                  f'**Phone number**: {f.phone_number}',
-                                  buttons=[Button.inline('Share')])
-
-        except NotAuthenticatedError as e:
+            await show_oc(event, inp, phone_number, shipment_number)
+        except (NotAuthenticatedError, ParcelTypeError) as e:
+            logger.exception(e)
             await event.reply(e.reason)
-        except ParcelTypeError as e:
-            await event.reply(e.reason)
-        except UnauthorizedError:
-            if await inp[event.sender.id].refresh_token():
-                try:
-                    msg = await event.get_reply_message()
-                    shipment_number = \
-                        (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[
-                            1].strip()
-                    friends = await inp[event.sender.id].get_parcel_friends(shipment_number=shipment_number,
-                                                                            parse=True)
-
-                    for f in friends['friends']:
-                        await event.reply(f'**Name**: {f.name}\n'
-                                          f'**Phone number**: {f.phone_number}',
-                                          buttons=[Button.inline('Share')])
-
-                except Exception as e:
-                    logger.exception(e)
-                    await event.reply('Bad things happened, call admin now!')
-
-    @client.on(CallbackQuery(pattern=b'QR Code'))
-    async def send_qr_code(event):
-        if event.sender.id in inp:
-            msg = await event.get_message()
-            shipment_number = \
-                (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
-            try:
-                await send_qrc(event, inp, shipment_number)
-
-            except NotAuthenticatedError as e:
-                await event.reply(e.reason)
-            except ParcelTypeError as e:
-                await event.reply(e.reason)
-            except UnauthorizedError:
-                if await inp[event.sender.id].refresh_token():
-                    try:
-                        await send_qrc(event, inp, shipment_number)
-
-                    except Exception as e:
-                        logger.exception(e)
-                        await event.reply('Bad things happened, call admin now!')
-                else:
-                    await event.reply('You are not authorized, initialize first!')
-
-            except NotFoundError:
-                await event.reply('Parcel not found!')
-            except UnidentifiedAPIError as e:
-                logger.exception(e)
-                await event.reply('Unexpected error occurred, call admin')
-            except Exception as e:
-                logger.exception(e)
-                await event.reply('Bad things happened, call admin now!')
-        else:
-            await event.reply('You are not initialized')
-
-    @client.on(CallbackQuery(pattern=b'Open Code'))
-    async def show_open_code(event):
-        if event.sender.id in inp:
-            msg = await event.get_message()
-            shipment_number = \
-                (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
-            try:
-                await show_oc(event, inp, shipment_number)
-            except NotAuthenticatedError as e:
-                await event.reply(e.reason)
-            except ParcelTypeError as e:
-                await event.reply(e.reason)
-            except UnauthorizedError:
-                if await inp[event.sender.id].refresh_token():
-                    try:
-                        await show_oc(event, inp, shipment_number)
-
-                    except Exception as e:
-                        logger.exception(e)
-                        await event.reply('Bad things happened, call admin now!')
-                else:
-                    await event.reply('You are not authorized, initialize first!')
-
-            except NotFoundError:
-                await event.reply('Parcel not found!')
-            except UnidentifiedAPIError as e:
-                logger.exception(e)
-                await event.reply('Unexpected error occurred, call admin')
-            except Exception as e:
-                logger.exception(e)
-                await event.reply('Bad things happened, call admin now!')
-
-        else:
-            await event.reply('You are not initialized')
+        except UnauthorizedError as e:
+            logger.exception(e)
+            await event.reply('You are not authorized, initialize first!')
+        except NotFoundError:
+            await event.reply('Parcel not found!')
+        except UnidentifiedAPIError as e:
+            logger.exception(e)
+            await event.reply('Unexpected error occurred, call admin')
+        except Exception as e:
+            logger.exception(e)
+            await event.reply('Bad things happened, call admin now!')
 
     @client.on(CallbackQuery(pattern=b'Open Compartment'))
+    @client.on(NewMessage(pattern='/open'))
     async def open_compartment(event):
-        if event.sender.id not in inp:
-            await event.reply('You are not initialized')
-
-        await event.reply('Please share your location so I can check whether you are near parcel machine or not. '
-                          'If you are a Apple user please send your location message as a reply to this message manually',
-                          buttons=[Button.request_location('Confirm location')])
-
-    @client.on(NewMessage())
-    async def location_confirmation(event):
-        if not event.message.geo:
-            return
-
+        # TODO: Add database check if user consent if parcel is ParcelType.TRACKED using /open instead of button
+        # TODO: Add database parcel get if user consent
         if event.sender.id not in inp:
             await event.reply('You are not initialized')
             return
-        msg = await event.get_reply_message()
-        msg = await msg.get_reply_message()
 
-        shipment_number = \
-            (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
+        match event:
+            case NewMessage.Event():
+                if not event.message.is_reply:
+                    await event.reply('You must reply to message with desired parcel!')
+                    return
+
+                shipment_number, phone_number = await get_shipment_and_phone_number_from_reply(event, inp)
+            case CallbackQuery.Event():
+                if inp[event.sender.id].default_phone_number is None:
+                    await event.reply(use_command_as_reply_message_builder("/open"))
+                    return
+                shipment_number, phone_number = await get_shipment_and_phone_number_from_button(event, inp)
+            case _:
+                await event.reply('Bad things happened, call admin now!')
+                return
+
         try:
-            p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
+            p: Parcel = await inp[event.sender.id][phone_number].inpost.get_parcel(shipment_number=shipment_number,
+                                                                                   parse=True)
 
-            match p.status:
-                case ParcelStatus.DELIVERED:
-                    await event.reply('Parcel already delivered!')
-                case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE:
-                    if (p.pickup_point.latitude - 0.0005 <= event.message.geo.lat <= p.pickup_point.latitude + 0.0005) \
-                            and \
-                            (
-                                    p.pickup_point.longitude - 0.0005 <= event.message.geo.long <= p.pickup_point.longitude + 0.0005):
-                        await event.reply('You are within the range, open?',
-                                          buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+            if p.status == ParcelStatus.DELIVERED:
+                await event.reply('Parcel already delivered!')
+                return
+
+            async with client.conversation(event.sender.id) as convo:
+                if inp[event.sender.id][phone_number].geocheck or inp[event.sender.id][phone_number].default_parcel_machine != p.pickup_point.name:
+                    if inp[event.sender.id][phone_number].location_time.shift(minutes=+2) < arrow.now(tz='Europe/Warsaw'):
+                        await convo.send_message(
+                            'Please share your location so I can check whether you are near parcel machine or not.',
+                            buttons=[Button.request_location('Confirm localization')])
+
+                        geo = await convo.get_response(timeout=30)
+                        if not geo.geo:
+                            await convo.send_message('Your message does not contain geolocation, start opening again!')
+                            return
+
+                        inp[event.sender.id][phone_number].location_time = arrow.now(tz='Europe/Warsaw')
+                        inp[event.sender.id][phone_number].location = (geo.geo.lat, geo.geo.long)
+
+                        status = await confirm_location(event=geo, inp=inp, parcel_obj=p)
+
+                        match status:
+                            case 'IN RANGE':
+                                await convo.send_message('You are in range. Are you sure to open?',
+                                                         buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+                            case 'OUT OF RANGE':
+                                await convo.send_message(out_of_range_message_builder(parcel=p),
+                                                         buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+                            case 'NOT READY':
+                                await convo.send_message(f'Parcel is not ready for pick up! Status: {p.status}')
+                            case 'DELIVERED':
+                                await convo.send_message('Parcel has been already delivered!')
+                                return
+
                     else:
-                        await event.reply(
-                            f'Your location is outside the range that is allowed to open this parcel machine. '
-                            f'Confirm that you are standing nearby, there is more detailed description:'
-                            f'\n\n**Name: {p.pickup_point.name}**'
-                            f'\n**Address: {p.pickup_point.post_code} {p.pickup_point.city}, '
-                            f'{p.pickup_point.street} {p.pickup_point.building_number}**\n'
-                            f'**Description: {p.pickup_point.description}**\n\n'
-                            f'Do you still want me to open it for you?',
-                            buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
-                case _:
-                    await event.reply(f'Parcel not ready for pick up!\nStatus: {p.status.value}')
+                        inp[event.sender.id][phone_number].location_time_lock = True  # gotta do this in case someone would want to hit 'open compartment' button just on the edge, otherwise hitting 'yes' button could be davson-insensitive
+                        await convo.send_message(f'Less than 2 minutes have passed since the last compartment opening, '
+                                                 f'you were in range of {p.pickup_point.name} parcel machine, '
+                                                 f'assuming you still are and skipping location verification.'
+                                                 f'\nAre you sure to open?',
+                                                 buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+                else:
+                    await convo.send_message(f'You have location checking off or this parcel is in default parcel '
+                                             f'machine, skipping! You can turn location checking on by sending:\n '
+                                             f'`/set_geocheck {phone_number} On`!\n\nAre you sure to open?',
+                                             buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
 
-        except NotAuthenticatedError as e:
-            await event.reply(e.reason)
-        except ParcelTypeError as e:
-            await event.reply(e.reason)
-        except UnauthorizedError:
-            if await inp[event.sender.id].refresh_token():
-                try:
-                    p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
+                decision = await convo.wait_event(event=CallbackQuery(), timeout=30)
 
-                    match p.status:
-                        case ParcelStatus.DELIVERED:
-                            await event.reply('Parcel already delivered!')
-                        case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE:
-                            if (p.pickup_point.latitude - 0.0005 <= event.message.geo.lat <= p.pickup_point.latitude + 0.0005) \
-                                    and (p.pickup_point.longitude - 0.0005 <= event.message.geo.long <= p.pickup_point.longitude + 0.0005):
-                                await event.reply('Your location is within the range, should I open?',
-                                                  buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
-                            else:
-                                await event.reply(
-                                    f'Your location is outside the range that is allowed to open this parcel machine. '
-                                    f'Confirm that you are standing nearby, there is description:'
-                                    f'\n\n**Name: {p.pickup_point.name}**'
-                                    f'\n**Address: {p.pickup_point.post_code} {p.pickup_point.city}, '
-                                    f'{p.pickup_point.street} {p.pickup_point.building_number}**\n'
-                                    f'**Description: {p.pickup_point.description}**\n\n'
-                                    f'Do you still want me to open it for you?',
-                                    buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
-                        case _:
-                            await event.reply(f'Parcel not ready for pick up!\nStatus: {p.status.value}')
+                match decision.data:
+                    case b'Yes!':
+                        if p_ := await open_comp(event, inp, phone_number, p):
+                            await decision.reply(open_comp_message_builder(parcel=p_), buttons=Button.clear())
+                    case b'Hell no!':
+                        await decision.reply('Fine, compartment remains closed!', buttons=Button.clear())
+                    case _:
+                        await decision.reply('Unrecognizable decision made, please start opening compartment '
+                                             'again!')
 
-                except Exception as e:
-                    logger.exception(e)
-                    await event.reply('Bad things happened, call admin now!')
-            else:
-                await event.reply('You are not authorized, initialize first!')
-        except NotFoundError:
-            await event.reply('Parcel not found')
+                return
+
+        except asyncio.TimeoutError as e:
+            logger.exception(e)
+            await convo.send_message('Time has ran out, please start opening compartment again!')
+            convo.cancel()
+        except PhoneNumberError as e:
+            logger.exception(e)
+            await convo.send_message(e.reason)
+        except UnauthorizedError as e:
+            logger.exception(e)
+            await convo.send_message('You are not authorized')
         except UnidentifiedAPIError as e:
             logger.exception(e)
-            await event.reply('Unexpected error occurred, call admin')
+            await convo.send_message('Unexpected error occurred, call admin')
         except Exception as e:
             logger.exception(e)
-            await event.reply('Bad things happened, call admin now!')
-
-    @client.on(CallbackQuery(pattern=b'Yes!'))
-    async def yes(event):
-        if event.sender.id not in inp:
-            await event.reply('You are not initialized')
-
-        msg = await event.get_message()
-        msg = await msg.get_reply_message()
-        msg = await msg.get_reply_message()
-        msg = await msg.get_reply_message()  # ffs gotta move 3 messages upwards
-        shipment_number = \
-            (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
-        p: Parcel = await inp[event.sender.id].get_parcel(shipment_number=shipment_number, parse=True)
-
-        try:
-            await open_comp(event, inp, p)
-
-        except NotAuthenticatedError as e:
-            await event.reply(e.reason)
-        except ParcelTypeError as e:
-            await event.reply(e.reason)
-        except UnauthorizedError:
-            if await inp[event.sender.id].refresh_token():
-                try:
-                    await open_comp(event, inp, p)
-
-                except Exception as e:
-                    logger.exception(e)
-                    await event.reply('Bad things happened, call admin now!')
-            else:
-                await event.reply('You are not authorized, initialize first!')
-        except NotFoundError:
-            await event.reply('Parcel not found')
-        except UnidentifiedAPIError as e:
-            logger.exception(e)
-            await event.reply('Unexpected error occurred, call admin')
-        except Exception as e:
-            logger.exception(e)
-            await event.reply('Bad things happened, call admin now!')
-
-    @client.on(CallbackQuery(pattern=b'Hell no!'))
-    async def no(event):
-        await event.reply('Fine, compartment remains closed!')
+            await convo.send_message('Bad things happened, call admin now!')
 
     @client.on(CallbackQuery(pattern=b'Details'))
+    @client.on(NewMessage(pattern='/details'))
     async def details(event):
-        if event.sender.id in inp:
-            msg = await event.get_message()
-            shipment_number = \
-                (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
+        # TODO: Add database check if user consent what ParcelType is parcel
+        if event.sender.id not in inp:
+            await event.reply('You are not initialized')
+            return
+
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
+        match event:
+            case NewMessage.Event():
+                if not event.message.is_reply:
+                    await event.reply('You must reply to message with desired parcel!')
+                    return
+
+                shipment_number, phone_number = await get_shipment_and_phone_number_from_reply(event, inp)
+
+                if phone_number is None:
+                    await event.reply('This phone number does not exist or does not belong to you!')
+                    return
+
+            case CallbackQuery.Event():
+                if inp[event.sender.id].default_phone_number is None:
+                    await event.reply(use_command_as_reply_message_builder("/details"))
+                    return
+
+                shipment_number, phone_number = await get_shipment_and_phone_number_from_button(event, inp)
+            case _:
+                logger.warning('Obtained other type of event than expected')
+                await event.reply('Bad things happened, call admin now!')
+                return
+
+        if shipment_number is None:
+            await event.reply('No shipment number!')
+            return
+
+        try:
+            await send_details(event, inp, shipment_number, ParcelType.TRACKED)
+
+        except (NotAuthenticatedError, ParcelTypeError) as e:
+            logger.exception(e)
+            await event.reply(e.reason)
+        except UnauthorizedError as e:
+            logger.exception(e)
+            await event.reply('You are not authorized, initialize first!')
+        except NotFoundError:
+            await event.reply('Parcel not found!')
+        except UnidentifiedAPIError as e:
+            logger.exception(e)
+            await event.reply('Unexpected error occurred, call admin')
+        except Exception as e:
+            logger.exception(e)
+            await event.reply('Bad things happened, call admin now!')
+
+    @client.on(CallbackQuery(pattern=b'Share'))
+    @client.on(NewMessage(pattern='/share'))
+    async def share_parcel(event):
+        # TODO: Add database check if user consent what ParcelType is parcel
+        if event.sender.id not in inp:
+            await event.reply('You are not initialized')
+            return
+
+        if inp[event.sender.id].consent is None:
+            await event.reply('You did not set your data collecting consent.'
+                              '\n\nSend `/consent yes` if you want your data to be collected '
+                              'in order to reduce data collected from inpost services and to help us develop this app.'
+                              'If you refuse send `/consent no`.')
+
+            return
+
+        match event:
+            case NewMessage.Event():
+                if not event.message.is_reply:
+                    await event.reply('You must reply to message with desired parcel!')
+                    return
+
+                shipment_number, phone_number = await get_shipment_and_phone_number_from_reply(event, inp)
+
+                if phone_number is None:
+                    await event.reply('This phone number does not exist or does not belong to you!')
+                    return
+
+            case CallbackQuery.Event():
+                if inp[event.sender.id].default_phone_number is None:
+                    await event.reply(use_command_as_reply_message_builder("/share"))
+                    return
+
+                shipment_number, phone_number = await get_shipment_and_phone_number_from_button(event, inp)
+            case _:
+                logger.warning('Obtained other type of event than expected')
+                await event.reply('Bad things happened, call admin now!')
+                return
+
+        if shipment_number is None:
+            await event.reply('No shipment number!')
+            return
+
+        async with client.conversation(event.sender.id) as convo:
             try:
-                await send_details(event, inp, shipment_number)
-            except NotAuthenticatedError as e:
-                await event.reply(e.reason)
-            except ParcelTypeError as e:
-                await event.reply(e.reason)
-            except UnauthorizedError:
-                if await inp[event.sender.id].refresh_token():
-                    try:
-                        await send_details(event, inp, shipment_number)
+                friends = await inp[event.sender.id][phone_number].inpost.get_parcel_friends(
+                    shipment_number=shipment_number, parse=True)
 
-                    except Exception as e:
-                        logger.exception(e)
-                        await event.reply('Bad things happened, call admin now!')
+                if not await is_parcel_owner(inp=inp, shipment_number=shipment_number, phone_number=phone_number,
+                                             event=event,
+                                             parcel_type=ParcelType.TRACKED):
+                    await event.reply('This parcel does not belong to you, cannot share it')
+                    return
+
+                if len(friends['friends']) == 0:
+                    await event.reply('This parcel has no people it can be shared with!')
+                    return
+
+                if isinstance(event, CallbackQuery.Event):
+                    for f in friends['friends']:
+                        await convo.send_message(f'**Name**: {f.name}\n'
+                                                 f'**Phone number**: {f.phone_number}',
+                                                 buttons=[Button.inline('Dispatch')])
+
+                    await event.reply('Fine, now pick a friend to share parcel to and press `Dispatch` button')
+                    friend = await convo.wait_event(CallbackQuery(pattern='Dispatch'), timeout=30)
+                    friend_event = friend
+                    friend = await friend.get_message()
+
+                elif isinstance(event, NewMessage.Event):
+                    for f in friends['friends']:
+                        await convo.send_message(f'**Name**: {f.name}\n'
+                                                 f'**Phone number**: {f.phone_number}')
+
+                    await convo.send_message('Fine, now pick a friend to share parcel to and '
+                                             'send a reply to him/her with `/dispatch`')
+                    friend = await convo.get_response(timeout=30)
+                    if not friend.is_reply:
+                        await friend.reply('You must reply to message with desired friend, start sharing again!')
+                        return
+
+                    friend_event = friend
+                    friend = await friend.get_reply_message()
+
+                friend = friend.raw_text.split('\n')
+                friend = [friend[0].split(':')[1].strip(), friend[1].split(':')[1].strip()]
+
+                uuid = (
+                    next((f for f in friends['friends'] if (f.name == friend[0] and f.phone_number == friend[1])))).uuid
+                if await inp[event.sender.id][phone_number].inpost.share_parcel(uuid=uuid,
+                                                                                shipment_number=shipment_number):
+                    await friend_event.reply('Parcel shared!')
                 else:
-                    await event.reply('You are not authorized, initialize first!')
+                    await friend_event.reply('Not shared, try again!')
 
+            except asyncio.TimeoutError as e:
+                logger.exception(e)
+                await convo.send_message('Time has ran out, please start sharing parcel again!')
+                convo.cancel()
+            except (NotAuthenticatedError, ParcelTypeError) as e:
+                logger.exception(e)
+                await event.reply(e.reason)
+            except UnauthorizedError as e:
+                logger.exception(e)
+                await event.reply('You are not authorized, initialize first!')
             except NotFoundError:
                 await event.reply('Parcel not found!')
             except UnidentifiedAPIError as e:
@@ -788,61 +940,8 @@ async def main(config, inp: Dict):
             except Exception as e:
                 logger.exception(e)
                 await event.reply('Bad things happened, call admin now!')
-
-        else:
-            await event.reply('You are not initialized')
-
-    @client.on(CallbackQuery(pattern=b'Share'))
-    async def share_parcel(event):
-        if event.sender.id not in inp:
-            await event.reply('You are not initialized')
-
-        try:
-            friend = await event.get_message()
-            msg = await friend.get_reply_message()
-            msg = await msg.get_reply_message()
-            friend = friend.raw_text.split('\n')
-            friend = [friend[0].split(':')[1].strip(), friend[1].split(':')[1].strip()]
-
-            shipment_number = \
-                (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[
-                    1].strip()
-
-            friends = await inp[event.sender.id].get_parcel_friends(shipment_number=shipment_number, parse=True)
-            uuid = (next((f for f in friends['friends'] if (f.name == friend[0] and f.phone_number == friend[1])))).uuid
-            if await inp[event.sender.id].share_parcel(uuid=uuid, shipment_number=shipment_number):
-                await event.reply('Parcel shared!')
-            else:
-                await event.reply('Not shared!')
-
-        except NotAuthenticatedError as e:
-            await event.reply(e.reason)
-        except ParcelTypeError as e:
-            await event.reply(e.reason)
-        except UnauthorizedError:
-            if await inp[event.sender.id].refresh_token():
-                try:
-                    friend = await event.get_message()
-                    msg = await friend.get_reply_message()
-                    msg = await msg.get_reply_message()
-                    friend = friend.raw_text.split('\n')
-                    friend = [friend[0].split(':')[1].strip(), friend[1].split(':')[1].strip()]
-
-                    shipment_number = \
-                        (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[
-                            1].strip()
-
-                    friends = await inp[event.sender.id].get_parcel_friends(shipment_number=shipment_number, parse=True)
-                    uuid = (next(
-                        (f for f in friends['friends'] if (f.name == friend[0] and f.phone_number == friend[1])))).uuid
-                    if await inp[event.sender.id].share_parcel(uuid=uuid, shipment_number=shipment_number):
-                        await event.reply('Parcel shared!')
-                    else:
-                        await event.reply('Not shared!')
-
-                except Exception as e:
-                    logger.exception(e)
-                    await event.reply('Bad things happened, call admin now!')
+            finally:
+                convo.cancel()
 
     async with client:
         print("Good morning!")

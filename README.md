@@ -24,18 +24,25 @@ From now, you are able to get full functionality from the bot! Head to the `Comm
 
 
 ## Commands
-
+If you have only one phone number set, you are good to go. 
+If desired command relate to default phone number you don't have to do anything else.
+But if you want to call command on specific phone number, you have to do it this way: `/command <phone_number> <following part of command>`. 
+> For example: `/parcel 123456789 123456789123456789123456`
 - `/start` - display start message and allow user to log in with Telegram
 - `/clear` - if you accidentally invoked `/start` and annoying box sprang up
 - `/init <phone number>` - login using phone number
-- `/confirm <sms code>` - confirm login with sms code
-- `/refresh` - refresh authorization token (try it before you will contact me)
+- `/me` - show information about all initialized accounts
 - `/pending` - receive pending parcels
 - `/delivered` - receive delivered parcels
 - `/parcel <shipment number>` - return parcel with desired shipment number
 - `/friends` - list all known inpost friends
 - `/share <as a reply to parcel message>` - share parcel to listed friend
 - `/all` - receive all available parcels
+
+### Deprecated commands
+- `/confirm <sms code>` - confirm login with sms code
+- `/refresh` - refresh authorization token (try it before you will contact me)
+
 
 
 ## Run Locally
