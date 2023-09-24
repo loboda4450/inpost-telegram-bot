@@ -20,7 +20,7 @@ class BotUserPhoneNumberConfig:
         self.geocheck: bool = kwargs['geocheck']
         self.airquality: bool = kwargs['airquality']
         self.location: tuple | None = kwargs['location'] if 'location' in kwargs else (0, 0)  # lat, long
-        self.location_time: arrow.arrow | None = kwargs['location_time'] if 'location_time' in kwargs else arrow.get('2023')
+        self.location_time: arrow.arrow | None = kwargs['location_time'] if 'location_time' in kwargs else arrow.get(str(arrow.now(tz="Europe/Warsaw").year))
         self.location_time_lock: bool = False
 
     @property
@@ -105,6 +105,14 @@ async def confirm_location(event: NewMessage | Message,
                 return 'OUT OF RANGE'
         case _:
             return 'NOT READY'
+
+
+def verify_location(p: Parcel, latlong: tuple) -> bool:
+    if latlong is None:
+        return False
+
+    return (p.pickup_point.latitude - 0.0005 <= latlong[0] <= p.pickup_point.latitude + 0.0005) and (
+                    p.pickup_point.longitude - 0.0005 <= latlong[1] <= p.pickup_point.longitude + 0.0005)
 
 
 async def get_shipment_number(event: NewMessage):

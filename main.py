@@ -15,7 +15,7 @@ from constants import pending_statuses, welcome_message, friend_invitations_mess
     not_enough_parameters_provided
 from utils import get_shipment_and_phone_number_from_button, send_pcgs, send_qrc, show_oc, open_comp, \
     send_details, BotUserPhoneNumberConfig, BotUserConfig, send_pcg, init_phone_number, confirm_location, \
-    get_shipment_and_phone_number_from_reply, is_parcel_owner
+    get_shipment_and_phone_number_from_reply, is_parcel_owner, verify_location
 
 
 async def main(config, inp: Dict):
@@ -694,7 +694,8 @@ async def main(config, inp: Dict):
 
             async with client.conversation(event.sender.id) as convo:
                 if inp[event.sender.id][phone_number].geocheck or inp[event.sender.id][phone_number].default_parcel_machine != p.pickup_point.name:
-                    if inp[event.sender.id][phone_number].location_time.shift(minutes=+2) < arrow.now(tz='Europe/Warsaw'):
+                    if inp[event.sender.id][phone_number].location_time.shift(minutes=+2) < arrow.now(tz='Europe/Warsaw')\
+                            or not verify_location(p, inp[event.sender.id][phone_number].location):
                         await convo.send_message(
                             'Please share your location so I can check whether you are near parcel machine or not.',
                             buttons=[Button.request_location('Confirm localization')])
