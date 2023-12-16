@@ -28,10 +28,14 @@ async def main(config, inp: Dict):
         raise Exception('No bot token provided')
 
     users = database.get_dict()
-
-    inp = {user: BotUserConfig(default_phone_number=database.get_default_phone_number(userid=user).phone_number,
+    inp = dict()
+    for user in users:
+        inp.update({user: BotUserConfig(default_phone_number=database.get_default_phone_number(userid=user).phone_number,
                                consent=database.get_user_consent(userid=user),
-                               phone_numbers=users[user]) for user in users}
+                               phone_numbers=users[user])})
+    # inp = {user: BotUserConfig(default_phone_number=database.get_default_phone_number(userid=user).phone_number,
+    #                            consent=database.get_user_consent(userid=user),
+    #                            phone_numbers=users[user]) for user in users}
 
     await client.start(bot_token=config['bot_token'])
     print("Started")

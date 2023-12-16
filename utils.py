@@ -2,7 +2,7 @@ from typing import List, Dict
 
 import arrow
 from inpost import Inpost
-from inpost.static import Parcel, ParcelShipmentType, ParcelStatus, ParcelType
+from inpost.static import Parcel, ParcelShipmentType, ParcelStatus, ParcelType, ParcelOwnership
 from telethon import Button
 from telethon.events import NewMessage, CallbackQuery
 from telethon.tl.patched import Message
@@ -14,13 +14,15 @@ from constants import multicompartment_message_builder, compartment_message_buil
 
 class BotUserPhoneNumberConfig:
     def __init__(self, **kwargs):
-        self.inpost: Inpost = Inpost.from_dict(kwargs['inpost']) if 'inpost' in kwargs else Inpost(phone_number=kwargs['phone_number'])
+        self.inpost: Inpost = Inpost.from_dict(kwargs['inpost']) if 'inpost' in kwargs else Inpost(
+            phone_number=kwargs['phone_number'])
         self.notifications: bool = kwargs['notifications']
         self.default_parcel_machine: str = kwargs['default_parcel_machine']
         self.geocheck: bool = kwargs['geocheck']
         self.airquality: bool = kwargs['airquality']
         self.location: tuple | None = kwargs['location'] if 'location' in kwargs else (0, 0)  # lat, long
-        self.location_time: arrow.arrow | None = kwargs['location_time'] if 'location_time' in kwargs else arrow.get(str(arrow.now(tz="Europe/Warsaw").year))
+        self.location_time: arrow.arrow | None = kwargs['location_time'] if 'location_time' in kwargs else arrow.get(
+            str(arrow.now(tz="Europe/Warsaw").year))
         self.location_time_lock: bool = False
 
     @property
@@ -29,7 +31,8 @@ class BotUserPhoneNumberConfig:
 
 
 class BotUserConfig:
-    def __init__(self, default_phone_number: int | str | None = None, consent: bool | None = None, phone_numbers: Dict = dict()):
+    def __init__(self, default_phone_number: int | str | None = None, consent: bool | None = None,
+                 phone_numbers: Dict = dict()):
         self._default_phone_number = default_phone_number
         self.consent: bool = consent
         self.phone_numbers: Dict = {pn: BotUserPhoneNumberConfig(
@@ -112,7 +115,7 @@ def verify_location(p: Parcel, latlong: tuple) -> bool:
         return False
 
     return (p.pickup_point.latitude - 0.0005 <= latlong[0] <= p.pickup_point.latitude + 0.0005) and (
-                    p.pickup_point.longitude - 0.0005 <= latlong[1] <= p.pickup_point.longitude + 0.0005)
+            p.pickup_point.longitude - 0.0005 <= latlong[1] <= p.pickup_point.longitude + 0.0005)
 
 
 async def get_shipment_number(event: NewMessage):
@@ -240,7 +243,7 @@ async def send_pcgs(event, inp, status, phone_number, parcel_type):
                                           [Button.inline('Open Code'), Button.inline('QR Code')],
                                           [Button.inline('Details'), Button.inline('Open Compartment')],
                                           [Button.inline(
-                                              'Share')]] if package.operations.can_share_parcel and package.ownership_status == 'OWN' else
+                                              'Share')]] if package.operations.can_share_parcel and package.ownership_status == ParcelOwnership.OWN else
                                       [[Button.inline('Open Code'), Button.inline('QR Code')],
                                        [Button.inline('Details'), Button.inline('Open Compartment')]]
                                       )
@@ -248,7 +251,7 @@ async def send_pcgs(event, inp, status, phone_number, parcel_type):
                     await event.reply(message,
                                       buttons=[Button.inline('Details'),
                                                Button.inline(
-                                                   'Share')] if package.operations.can_share_parcel and package.ownership_status == 'OWN' else [
+                                                   'Share')] if package.operations.can_share_parcel and package.ownership_status == ParcelOwnership.OWN else [
                                           Button.inline('Details')])
 
     else:
@@ -352,4 +355,4 @@ async def is_parcel_owner(inp, shipment_number, phone_number, event, parcel_type
     parcel = await inp[event.sender.id][phone_number].inpost.get_parcel(
         shipment_number=shipment_number, parcel_type=parcel_type, parse=True)
 
-    return parcel.ownership_status == 'OWN'
+    return parcel.ownership_status == ParcelOwnership.OWN

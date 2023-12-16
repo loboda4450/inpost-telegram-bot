@@ -4,7 +4,11 @@ from inpost.static import ParcelType
 from pony.orm import *
 from telethon.events import NewMessage
 
-db = Database('sqlite', 'inpost.sqlite', create_db=True)
+db = Database(provider='postgres',
+              user='yourinpostuser',
+              password='yourinpostuserpassword',
+              host='127.0.0.1',
+              database='inpost')
 
 
 class ParcelData(db.Entity):
@@ -132,7 +136,8 @@ def edit_default_phone_number(event: NewMessage, default_phone_number: int | str
         default_phone_number = int(default_phone_number)
 
     user = User.get_for_update(userid=event.sender.id)
-    if PhoneNumberConfig.exists(phone_number=default_phone_number) and PhoneNumberConfig[default_phone_number].user == user:
+    if PhoneNumberConfig.exists(phone_number=default_phone_number) and PhoneNumberConfig[
+        default_phone_number].user == user:
         user.default_phone_number = default_phone_number
         commit()
 
