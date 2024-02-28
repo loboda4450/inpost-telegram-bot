@@ -334,13 +334,14 @@ async def send_details(event, inp, shipment_number, parcel_type, phone_number=No
             f'{status.date.to("local").format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in
             parcel.event_log)
         air_quality = None
-        if inp[event.sender.id][int(phone_number)].airquality and parcel.pickup_point.air_sensor:
-            air_quality = f'Air quality: {parcel.pickup_point.air_sensor_data.air_quality}\n' \
-                          f'Temperature: {parcel.pickup_point.air_sensor_data.temperature}\n' \
-                          f'Humidity: {parcel.pickup_point.air_sensor_data.humidity}\n' \
-                          f'Pressure: {parcel.pickup_point.air_sensor_data.pressure}\n' \
-                          f'PM25: {parcel.pickup_point.air_sensor_data.pm25_value}, {parcel.pickup_point.air_sensor_data.pm25_percent}%\n' \
-                          f'Temperature: {parcel.pickup_point.air_sensor_data.pm10_value}, {parcel.pickup_point.air_sensor_data.pm10_percent}%\n'
+        if inp[event.sender.id][int(phone_number)].airquality and parcel.pickup_point is not None:
+            if parcel.pickup_point.air_sensor:
+                air_quality = f'Air quality: {parcel.pickup_point.air_sensor_data.air_quality}\n' \
+                              f'Temperature: {parcel.pickup_point.air_sensor_data.temperature}\n' \
+                              f'Humidity: {parcel.pickup_point.air_sensor_data.humidity}\n' \
+                              f'Pressure: {parcel.pickup_point.air_sensor_data.pressure}\n' \
+                              f'PM25: {parcel.pickup_point.air_sensor_data.pm25_value}, {parcel.pickup_point.air_sensor_data.pm25_percent}%\n' \
+                              f'Temperature: {parcel.pickup_point.air_sensor_data.pm10_value}, {parcel.pickup_point.air_sensor_data.pm10_percent}%\n'
 
         if parcel.status == ParcelStatus.READY_TO_PICKUP or parcel.status == ParcelStatus.STACK_IN_BOX_MACHINE:
             await event.reply(ready_to_pickup_message_builder(parcel=parcel, events=events, air_quality=air_quality))
