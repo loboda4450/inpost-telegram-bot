@@ -1,5 +1,12 @@
 bot_token: 1234567890:ABCDEFGHIJKLMNOUPRSTUWXYZ123456789100
 
+database_settings:
+  provider: postgres
+  user: inpost
+  password: password
+  host: 127.0.0.1
+  database: inpost
+
 telethon_settings:
   session: InpostBot
   auto_reconnect: true
