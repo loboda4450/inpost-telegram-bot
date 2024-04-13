@@ -170,7 +170,7 @@ async def send_pcgs(event, inp, status, phone_number, parcel_type):
                 database.add_parcel(event=event, phone_number=phone_number, ptype=parcel_type, parcel=to_log)
 
             match package.status:
-                case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE | ParcelStatus.STACK_IN_CUSTOMER_SERVICE_POINT:
+                case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE | ParcelStatus.STACK_IN_CUSTOMER_SERVICE_POINT | ParcelStatus.PICKUP_REMINDER_SENT:
                     await event.reply(message + f'\n🫳 **Pick up until:** '
                                                 f'`{package.expiry_date.to("local").format("DD.MM.YYYY HH:mm")}`',
                                       buttons=[
