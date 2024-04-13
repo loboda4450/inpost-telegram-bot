@@ -16,7 +16,12 @@ welcome_message = 'Hello!\nThis is a bot helping you to manage your InPost parce
                   'or by typing `/init <phone_number>`!\n\n' \
                   '**List of commands:**\n' \
                   '/start - display start message and allow user to login with Telegram\n' \
-                  '/init - login using phone number `/init <phone_number>`\n' \
+                  '/init - login using phone number `/init <prefix><phone_number>`\n' \
+                  '/clear - if you accidentally invoked `/start` and annoying box sprang up\n\n' \
+                  '/menu - then click what you want to do' \
+                  'Deprecated commands:\n' \
+                  '/refresh - refresh authorization token\n' \
+                  '/confirm <sms code> - confirm login with sms code' \
                   '/me - show information about all initialized accounts\n' \
                   '/pending - return pending parcels\n' \
                   '/delivered - return delivered parcels\n' \
@@ -24,10 +29,6 @@ welcome_message = 'Hello!\nThis is a bot helping you to manage your InPost parce
                   '/friends - list all known inpost friends \n' \
                   '/share <reply to parcel message> - share parcel to listed friend\n' \
                   '/all - return all available parcels\n' \
-                  '/clear - if you accidentally invoked `/start` and annoying box sprang up\n\n' \
-                  'Deprecated commands:\n' \
-                  '/refresh - refresh authorization token\n' \
-                  '/confirm <sms code> - confirm login with sms code' \
                   '\n\n\nBeware, before you start using this bot you must **set your consent** to data collecting. ' \
                   'It will affect all your connected accounts. Dev team assure you, that this data **will not** be ' \
                   'used or sold and all sensitive ones like your name and surname **will be** removed. ' \

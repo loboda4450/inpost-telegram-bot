@@ -127,9 +127,7 @@ async def main(config):
                                              auth_token=inp.auth_token)
                     await convo.send_message(
                         f'Congrats, you have successfully verified yourself. '
-                        f'If this was your first time, `{prefix} {phone_number}` is now your default one, '
-                        f'if you want to change your current one to this just send '
-                        f'`/set_default_phone_number {phone_number}`!'
+                        f'If this was your first time, `{prefix} {phone_number}` is now your default one!'
                         f'\n\nHave fun using InPost services there!', buttons=Button.clear())
                     return
 
@@ -197,9 +195,7 @@ async def main(config):
 
         if get_user_consent(userid=event.sender.id) is None:
             await event.reply('You did not set your data collecting consent.'
-                              '\n\nSend `/consent yes` if you want your data to be collected '
-                              'in order to reduce data collected from inpost services and to help us'
-                              ' develop this app. If you refuse send `/consent no`.')
+                              '\n\nSend `/consent` anc decide if you want your data to be collected :)')
 
             return
 
@@ -258,9 +254,7 @@ async def main(config):
 
         if get_user_consent(userid=event.sender.id) is None:
             await event.reply('You did not set your data collecting consent.'
-                              '\n\nSend `/consent yes` if you want your data to be collected '
-                              'in order to reduce data collected from inpost services and to help us'
-                              ' develop this app. If you refuse send `/consent no`.')
+                              '\n\nSend `/consent` anc decide if you want your data to be collected :)')
 
             return
 
