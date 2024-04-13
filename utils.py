@@ -15,7 +15,11 @@ from constants import multicompartment_message_builder, compartment_message_buil
 
 async def init_phone_number(event: NewMessage) -> Tuple[int | str, str] | None:
     if event.message.contact:  # first check if NewMessage contains contact field
-        return event.message.contact.phone_number[:-9], event.message.contact.phone_number[-9:]  # prefix, phone number
+        # WTF telegram/telethon,
+        # that shit is because in Contact sometimes they send +48, sometimes 48 even for the same number in a series.
+        return (event.message.contact.phone_number[:-9]
+                if event.message.contact.phone_number[:-9].startswith('+') else
+                '+'+event.message.contact.phone_number[:-9], event.message.contact.phone_number[-9:])
     elif not event.text.startswith('/init'):  # then check if starts with /init, if so proceed
         return None
     elif (len(event.text.split(' ')) == 2
@@ -251,7 +255,7 @@ async def send_details(event, inp, shipment_number, parcel_type):
             f'{status.date.to("local").format("DD.MM.YYYY HH:mm"):>22}: {status.name.value}' for status in
             parcel.event_log)
         air_quality = None
-        if inp.airquality and parcel.pickup_point.air_sensor:
+        if database.get_user_air_quality(userid=event.sender.id) and parcel.pickup_point.air_sensor:
             air_quality = f'Air quality: {parcel.pickup_point.air_sensor_data.air_quality}\n' \
                           f'Temperature: {parcel.pickup_point.air_sensor_data.temperature}\n' \
                           f'Humidity: {parcel.pickup_point.air_sensor_data.humidity}\n' \
