@@ -3,5 +3,5 @@ Telethon~=1.26.1
 inpost~=0.2.0a2
 pony~=0.7.16
 arrow~=1.2.3
-Pillow~=10.3.0
+Pillow~=9.5.0
 psycopg2-binary
