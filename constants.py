@@ -6,7 +6,8 @@ pending_statuses = [ParcelStatus.READY_TO_PICKUP, ParcelStatus.CONFIRMED,
                     ParcelStatus.DISPATCHED_BY_SENDER_TO_POK, ParcelStatus.OUT_FOR_DELIVERY,
                     ParcelStatus.OUT_FOR_DELIVERY_TO_ADDRESS, ParcelStatus.SENT_FROM_SOURCE_BRANCH,
                     ParcelStatus.TAKEN_BY_COURIER, ParcelStatus.TAKEN_BY_COURIER_FROM_POK,
-                    ParcelStatus.STACK_IN_BOX_MACHINE, ParcelStatus.STACK_IN_CUSTOMER_SERVICE_POINT]
+                    ParcelStatus.STACK_IN_BOX_MACHINE, ParcelStatus.STACK_IN_CUSTOMER_SERVICE_POINT,
+                    ParcelStatus.PICKUP_REMINDER_SENT, ParcelStatus.PICKUP_REMINDER_SENT_ADDRESS]
 
 welcome_message = 'Hello!\nThis is a bot helping you to manage your InPost parcels!\n' \
                   'If you want to contribute to Inpost development you can find us there: ' \

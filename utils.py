@@ -19,7 +19,7 @@ async def init_phone_number(event: NewMessage) -> Tuple[int | str, str] | None:
         # that shit is because in Contact sometimes they send +48, sometimes 48 even for the same number in a series.
         return (event.message.contact.phone_number[:-9]
                 if event.message.contact.phone_number[:-9].startswith('+') else
-                '+'+event.message.contact.phone_number[:-9], event.message.contact.phone_number[-9:])
+                '+' + event.message.contact.phone_number[:-9], event.message.contact.phone_number[-9:])
     elif not event.text.startswith('/init'):  # then check if starts with /init, if so proceed
         return None
     elif (len(event.text.split(' ')) == 2
