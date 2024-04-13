@@ -62,7 +62,7 @@ async def main(config):
                         convo.cancel()
                         return
 
-                    if not User.exists(userid=event.sender.id):
+                    if not user_exists(userid=event.sender.id):
                         add_user(event=event)
 
                     pn: PhoneNumberConfig = PhoneNumberConfig.get(phone_number=phone_number)
@@ -342,7 +342,8 @@ async def main(config):
                                                      'send a reply to him/her with `/dispatch`')
                             friend = await convo.get_response(timeout=30)
                             if not friend.is_reply:
-                                await friend.reply('You must reply to message with desired friend, start sharing again!')
+                                await friend.reply(
+                                    'You must reply to message with desired friend, start sharing again!')
                                 return
 
                             friend_event = friend
@@ -367,7 +368,8 @@ async def main(config):
                         if (get_user_geocheck(userid=event.sender.id) or
                                 get_user_default_parcel_machine(userid=event.sender.id) != p.pickup_point.name):
                             user_location = get_user_location(userid=event.sender.id)
-                            if (datetime.datetime.now() - user_location['location_time']) > datetime.timedelta(minutes=2):
+                            if (datetime.datetime.now() - user_location['location_time']) > datetime.timedelta(
+                                    minutes=2):
                                 await convo.send_message(
                                     'Please share your location so I can check '
                                     'whether you are near parcel machine or not.',
@@ -507,7 +509,7 @@ async def main(config):
     @client.on(NewMessage(pattern='/consent'))
     @client.on(CallbackQuery(pattern='Consent'))
     async def consent(event):
-        if not User.exists(userid=event.sender.id):
+        if not user_exists(userid=event.sender.id):
             await event.reply('You are not initialized')
             return
 
@@ -691,7 +693,6 @@ async def main(config):
     #     inp[event.sender.id][int(phone_number)].notifications = notifications
     #     await event.reply(f'Notifications are set to {msg.upper()}!')
     #
-
 
     async with client:
         print("Good morning!")
