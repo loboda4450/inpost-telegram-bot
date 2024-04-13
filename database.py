@@ -1,14 +1,14 @@
 from datetime import datetime
 
+import yaml
 from inpost.static import ParcelType
 from pony.orm import *
 from telethon.events import NewMessage
 
-db = Database(provider='postgres',
-              user='inpost_test',
-              password='inpost_test',
-              host='192.168.1.254',
-              database='inpost_test')
+with open("config.yml", 'r') as f:
+    config = yaml.safe_load(f)
+
+db = Database(**config['database_settings'])
 
 
 class ParcelData(db.Entity):
@@ -160,6 +160,11 @@ def get_user_location(userid: str | int):
         'location': (user.latitude, user.longitude),
         'location_time': user.location_time
     }
+
+
+@db_session
+def get_user_air_quality(userid: str | int):
+    return User.get(userid=userid).airquality
 
 
 @db_session
