@@ -4,7 +4,11 @@ from inpost.static import ParcelType
 from pony.orm import *
 from telethon.events import NewMessage
 
-db = Database('sqlite', 'inpost.sqlite', create_db=True)
+db = Database(provider='postgres',
+              user='inpost_test',
+              password='inpost_test',
+              host='192.168.1.254',
+              database='inpost_test')
 
 
 class ParcelData(db.Entity):
@@ -32,22 +36,26 @@ class PhoneNumberConfig(db.Entity):
     user = Required('User')
     default_to = Optional('User')
     parcels = Set('ParcelData')
+    prefix = Required(str)
     phone_number = PrimaryKey(int)
     sms_code = Optional(int)
     refr_token = Optional(str)
     auth_token = Optional(str)
     notifications = Required(bool)
-    default_parcel_machine = Optional(str)
-    geocheck = Required(bool)
-    airquality = Required(bool)
-    composite_key(user, phone_number)
+    composite_key(user, prefix, phone_number)
 
 
 class User(db.Entity):
     userid = PrimaryKey(int, size=64)
     default_phone_number = Optional(PhoneNumberConfig, reverse='default_to')
     data_collecting_consent = Optional(bool)
+    default_parcel_machine = Optional(str)
+    geocheck = Required(bool)
+    airquality = Required(bool)
     phone_numbers = Set(PhoneNumberConfig)
+    latitude = Optional(float)
+    longitude = Optional(float)
+    location_time = Optional(datetime)
 
 
 db.generate_mapping(create_tables=True)
@@ -88,9 +96,9 @@ def add_parcel(event: NewMessage, phone_number: int, parcel: dict, ptype: Parcel
 
 
 @db_session
-def add_user(event: NewMessage):
+def add_user(event: NewMessage, geocheck=True, airquality=True):
     if not User.exists(userid=event.sender.id):
-        return User(userid=event.sender.id)
+        return User(userid=event.sender.id, geocheck=geocheck, airquality=airquality)
 
 
 @db_session
@@ -99,21 +107,18 @@ def phone_number_exists(phone_number):
 
 
 @db_session
-def add_phone_number_config(event: NewMessage, phone_number: int | str, notifications: bool = True,
-                            geocheck: bool = True,
-                            airquality: bool = True):
+def add_phone_number_config(event: NewMessage,
+                            prefix: str,
+                            phone_number: str,
+                            notifications: bool = True):
     if not User.exists(userid=event.sender.id):
         return
 
-    if isinstance(phone_number, str):
-        phone_number = int(phone_number)
-
     user = User.get_for_update(userid=event.sender.id)
 
-    user.phone_numbers.create(phone_number=phone_number,
-                              notifications=notifications,
-                              geocheck=geocheck,
-                              airquality=airquality)
+    user.phone_numbers.create(prefix=prefix,
+                              phone_number=phone_number,
+                              notifications=notifications)
 
     commit()
 
@@ -121,6 +126,56 @@ def add_phone_number_config(event: NewMessage, phone_number: int | str, notifica
 @db_session
 def get_default_phone_number(userid: str | int):
     return User.get(userid=userid).default_phone_number
+
+
+@db_session
+def get_user_default_parcel_machine(userid: str | int):
+    return User.get(userid=userid).default_parcel_machine
+
+
+@db_session
+def get_user_phone_numbers(userid: str | int):
+    return select(pn for pn in PhoneNumberConfig if pn.user.userid == userid)
+
+
+@db_session
+def count_user_phone_numbers(userid: str | int):
+    return count(pn for pn in PhoneNumberConfig if pn.user.userid == userid)
+
+
+@db_session
+def get_user_consent(userid: str | int):
+    return User.get(userid=userid).data_collecting_consent
+
+
+@db_session
+def get_user_geocheck(userid: str | int):
+    return User.get(userid=userid).geocheck
+
+
+@db_session
+def get_user_location(userid: str | int):
+    user = User.get(userid=userid)
+    return {
+        'location': (user.latitude, user.longitude),
+        'location_time': user.location_time
+    }
+
+
+@db_session
+def update_user_location(userid: str | int, lat: float, long: float, loc_time: datetime):
+    user = User.get_for_update(userid=userid)
+    user.latitude = lat
+    user.longitude = long
+    user.location_time = loc_time
+
+    commit()
+    return
+
+
+@db_session
+def user_exists(userid: str | int):
+    return User.exists(userid=userid)
 
 
 @db_session
@@ -132,7 +187,8 @@ def edit_default_phone_number(event: NewMessage, default_phone_number: int | str
         default_phone_number = int(default_phone_number)
 
     user = User.get_for_update(userid=event.sender.id)
-    if PhoneNumberConfig.exists(phone_number=default_phone_number) and PhoneNumberConfig[default_phone_number].user == user:
+    if PhoneNumberConfig.exists(phone_number=default_phone_number) and PhoneNumberConfig[
+        default_phone_number].user == user:
         user.default_phone_number = default_phone_number
         commit()
 
@@ -140,18 +196,13 @@ def edit_default_phone_number(event: NewMessage, default_phone_number: int | str
 
 
 @db_session
-def edit_default_parcel_machine(event: NewMessage, phone_number: int | str, default_parcel_machine: int | str):
+def edit_default_parcel_machine(event: NewMessage, default_parcel_machine: int | str):
     if not User.exists(userid=event.sender.id):
         return
 
-    if isinstance(phone_number, str):
-        phone_number = int(phone_number)
-
-    user = User.get(userid=event.sender.id)
-    if PhoneNumberConfig.exists(phone_number=phone_number) and PhoneNumberConfig[phone_number].user == user:
-        phone = PhoneNumberConfig.get_for_update(phone_number=phone_number)
-        phone.default_parcel_machine = default_parcel_machine
-        commit()
+    user = User.get_for_update(userid=event.sender.id)
+    user.default_parcel_machine = default_parcel_machine
+    commit()
 
     return
 
@@ -224,3 +275,14 @@ def get_dict():
         } for phone_number in user.phone_numbers.select()
     } for user in User.select()
     }
+
+
+@db_session
+def get_inpost_obj(userid: int, phone_number: str):
+    inp: PhoneNumberConfig = PhoneNumberConfig.get(user=userid, phone_number=phone_number)
+    if inp is not None:
+        return {'prefix': inp.prefix,
+                'phone_number': str(inp.phone_number),
+                'sms_code': inp.sms_code,
+                'auth_token': inp.auth_token,
+                'refr_token': inp.refr_token}
