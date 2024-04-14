@@ -1,5 +1,4 @@
 import asyncio
-import datetime
 import logging
 
 import yaml
@@ -10,13 +9,13 @@ from pony.orm import count
 from telethon import TelegramClient, Button
 from telethon.events import NewMessage, CallbackQuery
 
-from constants import pending_statuses, welcome_message, out_of_range_message_builder, open_comp_message_builder
-from database import User, PhoneNumberConfig, add_user, add_phone_number_config, \
-    edit_default_phone_number, get_inpost_obj, edit_phone_number_config, set_user_consent, get_default_phone_number, \
-    count_user_phone_numbers, get_user_phone_numbers, db_session, user_exists, get_user_consent, get_user_geocheck, \
-    get_user_default_parcel_machine, get_user_location, update_user_location
-from utils import get_shipment_and_phone_number_from_button, send_pcgs, send_qrc, show_oc, open_comp, \
-    send_details, send_pcg, init_phone_number, confirm_location, is_parcel_owner
+from constants import pending_statuses, welcome_message
+from database import PhoneNumberConfig, add_user, add_phone_number_config, \
+    edit_default_phone_number, get_inpost_obj, edit_phone_number_config, get_default_phone_number, \
+    count_user_phone_numbers, get_user_phone_numbers, db_session, user_exists, get_user_last_parcel_with_shipment_number
+from utils import send_pcgs, send_qrc, show_oc, send_details, send_pcg, init_phone_number, share_parcel, \
+    open_compartment, \
+    get_shipment_number_from_button
 
 
 async def main(config):
@@ -180,7 +179,7 @@ async def main(config):
                                    ])
 
     @client.on(CallbackQuery(pattern=b'Friends'))
-    async def send_menu_parcels(event):
+    async def send_menu_friends(event):
         if not user_exists(userid=event.sender.id):
             await event.reply('You are not initialized')
             return
@@ -191,12 +190,6 @@ async def main(config):
     async def get_parcel(event):
         if not user_exists(userid=event.sender.id):
             await event.reply('You are not initialized')
-            return
-
-        if get_user_consent(userid=event.sender.id) is None:
-            await event.reply('You did not set your data collecting consent.'
-                              '\n\nSend `/consent` anc decide if you want your data to be collected :)')
-
             return
 
         async with client.conversation(event.sender.id) as convo:
@@ -252,12 +245,6 @@ async def main(config):
             await event.reply('You are not initialized')
             return
 
-        if get_user_consent(userid=event.sender.id) is None:
-            await event.reply('You did not set your data collecting consent.'
-                              '\n\nSend `/consent` anc decide if you want your data to be collected :)')
-
-            return
-
         match event.data:
             case b'Pending':
                 status = pending_statuses
@@ -288,151 +275,17 @@ async def main(config):
                                                       get_user_phone_numbers(userid=event.sender.id)])
 
                     phone_number = await convo.wait_event(event=CallbackQuery(), timeout=30)
-                    phone_number = phone_number.data.decode("utf-8")
+                    phone_number = phone_number.data.decode("utf-8").strip()
 
                 inp = Inpost(**get_inpost_obj(userid=event.sender.id, phone_number=phone_number))
 
                 await send_pcgs(event, inp, status, phone_number, parcel_type)
 
-                option = await convo.wait_event(event=CallbackQuery(), timeout=30)
-                shipment_number = await get_shipment_and_phone_number_from_button(option)
-                match option.data:
-                    case b'Open Code':
-                        await show_oc(option, inp, shipment_number)
-                    case b'QR Code':
-                        await send_qrc(option, inp, phone_number, shipment_number)
-                    case b'Details':
-                        await send_details(option, inp, shipment_number, ParcelType.TRACKED)
-                    case b'Share':
-                        friends = await inp.get_parcel_friends(shipment_number=shipment_number, parse=True)
-
-                        if not await is_parcel_owner(inp=inp,
-                                                     shipment_number=shipment_number,
-                                                     parcel_type=ParcelType.TRACKED):
-                            await event.reply('This parcel does not belong to you, cannot share it')
-                            return
-
-                        if len(friends['friends']) == 0:
-                            await event.reply('This parcel has no people it can be shared with!')
-                            return
-
-                        if isinstance(event, CallbackQuery.Event):
-                            for f in friends['friends']:
-                                await convo.send_message(f'**Name**: {f.name}\n'
-                                                         f'**Phone number**: {f.phone_number}',
-                                                         buttons=[Button.inline('Dispatch')])
-
-                            await event.reply('Fine, now pick a friend to share parcel to and press `Dispatch` button')
-                            friend = await convo.wait_event(CallbackQuery(pattern='Dispatch'), timeout=30)
-                            friend_event = friend
-                            friend = await friend.get_message()
-
-                        elif isinstance(event, NewMessage.Event):
-                            for f in friends['friends']:
-                                await convo.send_message(f'**Name**: {f.name}\n'
-                                                         f'**Phone number**: {f.phone_number}')
-
-                            await convo.send_message('Fine, now pick a friend to share parcel to and '
-                                                     'send a reply to him/her with `/dispatch`')
-                            friend = await convo.get_response(timeout=30)
-                            if not friend.is_reply:
-                                await friend.reply(
-                                    'You must reply to message with desired friend, start sharing again!')
-                                return
-
-                            friend_event = friend
-                            friend = await friend.get_reply_message()
-
-                        friend = friend.raw_text.split('\n')
-                        friend = [friend[0].split(':')[1].strip(), friend[1].split(':')[1].strip()]
-
-                        uuid = (next((f for f in friends['friends'] if
-                                      (f.name == friend[0] and f.phone_number == friend[1])))).uuid
-                        if await inp.share_parcel(uuid=uuid, shipment_number=shipment_number):
-                            await friend_event.reply('Parcel shared!')
-                        else:
-                            await friend_event.reply('Not shared, try again!')
-
-                    case b'Open Compartment':
-                        # TODO: Add database check if user consent if parcel
-                        #  is ParcelType.TRACKED using /open instead of button
-                        # TODO: Add database parcel get if user consent
-                        p: Parcel = await inp.get_parcel(shipment_number=shipment_number, parcel_type=parcel_type,
-                                                         parse=True)
-                        if (get_user_geocheck(userid=event.sender.id) or
-                                get_user_default_parcel_machine(userid=event.sender.id) != p.pickup_point.name):
-                            user_location = get_user_location(userid=event.sender.id)
-                            if (datetime.datetime.now() - user_location['location_time']) > datetime.timedelta(
-                                    minutes=2):
-                                await convo.send_message(
-                                    'Please share your location so I can check '
-                                    'whether you are near parcel machine or not.',
-                                    buttons=[Button.request_location('Confirm localization')])
-
-                                geo = await convo.get_response(timeout=30)
-                                if not geo.geo:
-                                    await convo.send_message(
-                                        'Your message does not contain geolocation, start opening again!',
-                                        buttons=Button.clear())
-                                    convo.cancel()
-                                    return
-
-                                update_user_location(userid=event.sender.id,
-                                                     lat=geo.geo.lat,
-                                                     long=geo.geo.long,
-                                                     loc_time=datetime.datetime.now()
-                                                     )
-
-                                status = await confirm_location(event=geo, parcel_obj=p)
-
-                                match status:
-                                    case 'IN RANGE':
-                                        await convo.send_message('You are in range. Are you sure to open?',
-                                                                 buttons=[Button.inline('Yes!'),
-                                                                          Button.inline('Hell no!')])
-                                    case 'OUT OF RANGE':
-                                        await convo.send_message(out_of_range_message_builder(parcel=p),
-                                                                 buttons=[Button.inline('Yes!'),
-                                                                          Button.inline('Hell no!')])
-                                    case 'NOT READY':
-                                        await convo.send_message(f'Parcel is not ready for pick up! Status: {p.status}')
-                                    case 'DELIVERED':
-                                        await convo.send_message('Parcel has been already delivered!')
-                                        return
-
-                            else:
-                                await convo.send_message(
-                                    f'Less than 2 minutes have passed since the last compartment opening, '
-                                    f'you were in range of **{p.pickup_point.name}** parcel machine, '
-                                    f'assuming you still are and skipping location verification.'
-                                    f'\nAre you sure to open?',
-                                    buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
-                        else:
-                            await convo.send_message(
-                                f'You have location checking off or this parcel is in default parcel '
-                                f'machine, skipping! You can turn location checking on by sending:\n '
-                                f'`/set_geocheck {phone_number} On`!\n\nAre you sure to open?',
-                                buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
-
-                        decision = await convo.wait_event(event=CallbackQuery(), timeout=30)
-
-                        match decision.data:
-                            case b'Yes!':
-                                if p_ := await open_comp(event, inp, phone_number, p):
-                                    await decision.reply(open_comp_message_builder(parcel=p_), buttons=Button.clear())
-                            case b'Hell no!':
-                                await decision.reply('Fine, compartment remains closed!', buttons=Button.clear())
-                            case _:
-                                await decision.reply('Unrecognizable decision made, please start opening compartment '
-                                                     'again!')
-
-                convo.cancel()
-                return
-
             except asyncio.TimeoutError as e:
                 logger.exception(e)
                 await convo.send_message('Time has ran out, please start opening compartment again!',
                                          buttons=[Button.clear()])
+
             except (NotAuthenticatedError, ParcelTypeError) as e:
                 logger.exception(e)
                 await event.reply(e.reason)
@@ -447,6 +300,61 @@ async def main(config):
             except Exception as e:
                 logger.exception(e)
                 await event.reply('Bad things happened, call admin now!')
+            finally:
+                convo.cancel()
+                return
+
+    @client.on(CallbackQuery(pattern='Open Code'))
+    @client.on(CallbackQuery(pattern='QR Code'))
+    @client.on(CallbackQuery(pattern='Details'))
+    @client.on(CallbackQuery(pattern='Share'))
+    @client.on(CallbackQuery(pattern='Open Compartment'))
+    async def handle_parcel(event):
+        async with client.conversation(event.sender.id) as convo:
+            try:
+                shipment_number = await get_shipment_number_from_button(event)
+                raw_parcel = get_user_last_parcel_with_shipment_number(event.sender.id, shipment_number)
+                inp = Inpost(**get_inpost_obj(userid=event.sender.id,
+                                              phone_number=raw_parcel.phone_number.phone_number))
+                parcel = Parcel(raw_parcel.parcel, logging.getLogger('Inpost'))
+                match event.data:
+                    case b'Open Code':
+                        await show_oc(event, parcel, inp)
+                    case b'QR Code':
+                        await send_qrc(event, parcel, inp)
+                    case b'Details':
+                        await send_details(event, inp, parcel)
+                    case b'Share':
+                        await share_parcel(event, convo, inp, parcel.shipment_number)
+                    case b'Open Compartment':
+                        await open_compartment(event, convo, inp, parcel.shipment_number,
+                                               ParcelType['raw_parcel.ptype'])
+                    case _:
+                        await convo.send_message('Time has ran out, please start opening compartment again!',
+                                                 buttons=[Button.clear()])
+
+            except asyncio.TimeoutError as e:
+                logger.exception(e)
+                await convo.send_message('Time has ran out, please start opening compartment again!',
+                                         buttons=[Button.clear()])
+
+            except (NotAuthenticatedError, ParcelTypeError) as e:
+                logger.exception(e)
+                await event.reply(e.reason)
+            except UnauthorizedError as e:
+                logger.exception(e)
+                await event.reply('You are not authorized, initialize first!')
+            except NotFoundError:
+                await event.reply('No parcels found!')
+            except UnidentifiedAPIError as e:
+                logger.exception(e)
+                await event.reply('Unexpected error occurred, call admin')
+            except Exception as e:
+                logger.exception(e)
+                await event.reply('Bad things happened, call admin now!')
+            finally:
+                convo.cancel()
+                return
 
     # @client.on(NewMessage(pattern='/friends'))
     # async def send_friends(event):
@@ -500,29 +408,6 @@ async def main(config):
     #             logger.exception(e)
     #             await convo.send_message('Bad things happened, call admin now!')
     #
-    @client.on(NewMessage(pattern='/consent'))
-    @client.on(CallbackQuery(pattern='Consent'))
-    async def consent(event):
-        if not user_exists(userid=event.sender.id):
-            await event.reply('You are not initialized')
-            return
-
-        async with client.conversation(event.sender.id) as convo:
-            await convo.send_message('Do you agree for anonymized data collection? '
-                                     'It will be used only for development process.',
-                                     buttons=[Button.inline('Yes!'),
-                                              Button.inline('No :(')])
-
-            decision = await convo.wait_event(event=CallbackQuery(), timeout=30)
-            match decision.data:
-                case b"No :(":
-                    set_user_consent(event=event, consent=False)
-                    await decision.reply(f'Your data will not be collected from this moment. '
-                                         f'Anytime you change your mind just send `/consent` and pick .')
-                case b"Yes!":
-                    set_user_consent(event=event, consent=True)
-                    await decision.reply(f'Your data will be collected from this moment.')
-
     #
     # @client.on(NewMessage(pattern='/set_default_phone_number'))
     # async def set_default_phone_number(event):

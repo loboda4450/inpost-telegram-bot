@@ -1,3 +1,4 @@
+import datetime
 from typing import List, Dict, Tuple
 
 import arrow
@@ -10,7 +11,8 @@ from telethon.tl.patched import Message
 import database
 from database import User
 from constants import multicompartment_message_builder, compartment_message_builder, delivered_message_builder, \
-    details_message_builder, ready_to_pickup_message_builder
+    details_message_builder, ready_to_pickup_message_builder, out_of_range_message_builder, open_comp_message_builder, \
+    pending_statuses
 
 
 async def init_phone_number(event: NewMessage) -> Tuple[int | str, str] | None:
@@ -80,7 +82,7 @@ async def get_shipment_and_phone_number_from_reply(event, inp):
     return shipment_number, phone_number
 
 
-async def get_shipment_and_phone_number_from_button(event):
+async def get_shipment_number_from_button(event):
     msg = await event.get_message()
     shipment_number = \
         (next((data for data in msg.raw_text.split('\n') if 'Shipment number' in data))).split(':')[1].strip()
@@ -197,40 +199,46 @@ async def send_pcgs(event, inp, status, phone_number, parcel_type):
     return status
 
 
-async def send_qrc(event, inp, phone_number, shipment_number):
-    p: Parcel = await inp.get_parcel(shipment_number=shipment_number, parse=True)
-    if p.status == ParcelStatus.READY_TO_PICKUP or p.status == ParcelStatus.STACK_IN_BOX_MACHINE:
-        await event.reply(file=p.generate_qr_image)
-    else:
-        await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
+async def send_qrc(event, parcel, inp):
+    if parcel.status not in pending_statuses:
+        parcel: Parcel = await inp.get_parcel(shipment_number=parcel.shipment_number, parse=True)
+
+    if parcel.status not in pending_statuses:
+        await event.answer(f'Parcel not ready for pick up!\nStatus: {parcel.status.value}', alert=True)
+        return
+
+    await event.reply(file=parcel.generate_qr_image)
 
 
-async def show_oc(event, inp, shipment_number):
-    p: Parcel = await inp.get_parcel(shipment_number=shipment_number, parse=True)
-    if p.status == ParcelStatus.READY_TO_PICKUP or p.status == ParcelStatus.STACK_IN_BOX_MACHINE:
-        await event.answer(f'This parcel open code is: {p.open_code}', alert=True)
-    else:
-        await event.answer(f'Parcel not ready for pick up!\nStatus: {p.status.value}', alert=True)
+
+async def show_oc(event, parcel, inp):
+    if parcel.status not in pending_statuses:
+        parcel: Parcel = await inp.get_parcel(shipment_number=parcel.shipment_number, parse=True)
+
+    if parcel.status not in pending_statuses:
+        await event.answer(f'Parcel not ready for pick up!\nStatus: {parcel.status.value}', alert=True)
+
+    await event.answer(f'This parcel open code is: {parcel.open_code}', alert=True)
 
 
-async def open_comp(event, inp, phone_number, p: Parcel):
+async def open_comp(event, inp, p: Parcel):
+    if p.status not in pending_statuses:
+        p: Parcel = await inp.get_parcel(shipment_number=p.shipment_number, parse=True)
+
     p_ = await inp.collect(parcel_obj=p)
     if p_ is not None:
-        if database.get_user_consent(event.sender.id):
-            to_log = await inp.get_parcel(shipment_number=p.shipment_number,
-                                          parcel_type=ParcelType.TRACKED,
-                                          parse=False)
+        to_log = await inp.get_parcel(shipment_number=p.shipment_number,
+                                      parcel_type=ParcelType.TRACKED,
+                                      parse=False)
 
-            database.add_parcel(event=event, phone_number=phone_number, ptype=ParcelType.TRACKED, parcel=to_log)
+        database.add_parcel(event=event, phone_number=inp.phone_number, ptype=ParcelType.TRACKED, parcel=to_log)
 
         return p_
 
     return None
 
 
-async def send_details(event, inp, shipment_number, parcel_type):
-    parcel: Parcel = await inp.get_parcel(shipment_number=shipment_number, parcel_type=parcel_type, parse=True)
-
+async def send_details(event, inp, parcel):
     if parcel.is_multicompartment:  # TODO: Add airsensor data
         parcels = await inp.get_multi_compartment(multi_uuid=parcel.multi_compartment.uuid, parse=True)
         message = ''
@@ -272,6 +280,131 @@ async def send_details(event, inp, shipment_number, parcel_type):
             await event.reply(f'**Events**:\n{events}')
 
     return
+
+
+async def share_parcel(event, convo, inp, shipment_number):
+    friends = await inp.get_parcel_friends(shipment_number=shipment_number, parse=True)
+
+    if not await is_parcel_owner(inp=inp,
+                                 shipment_number=shipment_number,
+                                 parcel_type=ParcelType.TRACKED):
+        await event.reply('This parcel does not belong to you, cannot share it')
+        return
+
+    if len(friends['friends']) == 0:
+        await event.reply('This parcel has no people it can be shared with!')
+        return
+
+    if isinstance(event, CallbackQuery.Event):
+        for f in friends['friends']:
+            await convo.send_message(f'**Name**: {f.name}\n'
+                                     f'**Phone number**: {f.phone_number}',
+                                     buttons=[Button.inline('Dispatch')])
+
+        await event.reply('Fine, now pick a friend to share parcel to and press `Dispatch` button')
+        friend = await convo.wait_event(CallbackQuery(pattern='Dispatch'), timeout=30)
+        friend_event = friend
+        friend = await friend.get_message()
+
+    elif isinstance(event, NewMessage.Event):
+        for f in friends['friends']:
+            await convo.send_message(f'**Name**: {f.name}\n'
+                                     f'**Phone number**: {f.phone_number}')
+
+        await convo.send_message('Fine, now pick a friend to share parcel to and '
+                                 'send a reply to him/her with `/dispatch`')
+        friend = await convo.get_response(timeout=30)
+        if not friend.is_reply:
+            await friend.reply(
+                'You must reply to message with desired friend, start sharing again!')
+            return
+
+        friend_event = friend
+        friend = await friend.get_reply_message()
+
+    friend = friend.raw_text.split('\n')
+    friend = [friend[0].split(':')[1].strip(), friend[1].split(':')[1].strip()]
+
+    uuid = (next((f for f in friends['friends'] if
+                  (f.name == friend[0] and f.phone_number == friend[1])))).uuid
+    if await inp.share_parcel(uuid=uuid, shipment_number=shipment_number):
+        await friend_event.reply('Parcel shared!')
+    else:
+        await friend_event.reply('Not shared, try again!')
+
+
+async def open_compartment(event, convo, inp, parcel, parcel_type):
+    # TODO: Add database check if user consent if parcel
+    #  is ParcelType.TRACKED using /open instead of button
+    # TODO: Add database parcel get if user consent
+    p: Parcel = await inp.get_parcel(shipment_number=parcel.shipment_number, parcel_type=parcel_type,
+                                     parse=True)
+    if (database.get_user_geocheck(userid=event.sender.id) or
+            database.get_user_default_parcel_machine(userid=event.sender.id) != p.pickup_point.name):
+        user_location = database.get_user_location(userid=event.sender.id)
+        if (datetime.datetime.now() - user_location['location_time']) > datetime.timedelta(
+                minutes=2):
+            await convo.send_message(
+                'Please share your location so I can check '
+                'whether you are near parcel machine or not.',
+                buttons=[Button.request_location('Confirm localization')])
+
+            geo = await convo.get_response(timeout=30)
+            if not geo.geo:
+                await convo.send_message(
+                    'Your message does not contain geolocation, start opening again!',
+                    buttons=Button.clear())
+                convo.cancel()
+                return
+
+            database.update_user_location(userid=event.sender.id,
+                                          lat=geo.geo.lat,
+                                          long=geo.geo.long,
+                                          loc_time=datetime.datetime.now()
+                                          )
+
+            status = await confirm_location(event=geo, parcel_obj=p)
+
+            match status:
+                case 'IN RANGE':
+                    await convo.send_message('You are in range. Are you sure to open?',
+                                             buttons=[Button.inline('Yes!'),
+                                                      Button.inline('Hell no!')])
+                case 'OUT OF RANGE':
+                    await convo.send_message(out_of_range_message_builder(parcel=p),
+                                             buttons=[Button.inline('Yes!'),
+                                                      Button.inline('Hell no!')])
+                case 'NOT READY':
+                    await convo.send_message(f'Parcel is not ready for pick up! Status: {p.status}')
+                case 'DELIVERED':
+                    await convo.send_message('Parcel has been already delivered!')
+                    return
+
+        else:
+            await convo.send_message(
+                f'Less than 2 minutes have passed since the last compartment opening, '
+                f'you were in range of **{p.pickup_point.name}** parcel machine, '
+                f'assuming you still are and skipping location verification.'
+                f'\nAre you sure to open?',
+                buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+    else:
+        await convo.send_message(
+            f'You have location checking off or this parcel is in default parcel '
+            f'machine, skipping! You can turn location checking on by sending:\n '
+            f'`/set_geocheck {inp.phone_number} On`!\n\nAre you sure to open?',
+            buttons=[Button.inline('Yes!'), Button.inline('Hell no!')])
+
+    decision = await convo.wait_event(event=CallbackQuery(), timeout=30)
+
+    match decision.data:
+        case b'Yes!':
+            if p_ := await open_comp(event, inp, p):
+                await decision.reply(open_comp_message_builder(parcel=p_), buttons=Button.clear())
+        case b'Hell no!':
+            await decision.reply('Fine, compartment remains closed!', buttons=Button.clear())
+        case _:
+            await decision.reply('Unrecognizable decision made, please start opening compartment '
+                                 'again!')
 
 
 async def is_parcel_owner(inp, shipment_number, parcel_type) -> bool:

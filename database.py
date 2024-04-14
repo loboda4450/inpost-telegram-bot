@@ -98,7 +98,7 @@ def add_parcel(event: NewMessage, phone_number: int, parcel: dict, ptype: Parcel
 @db_session
 def add_user(event: NewMessage, geocheck=True, airquality=True):
     if not User.exists(userid=event.sender.id):
-        return User(userid=event.sender.id, geocheck=geocheck, airquality=airquality)
+        return User(userid=event.sender.id, data_collecting_consent=True, geocheck=geocheck, airquality=airquality)
 
 
 @db_session
@@ -165,6 +165,12 @@ def get_user_location(userid: str | int):
 @db_session
 def get_user_air_quality(userid: str | int):
     return User.get(userid=userid).airquality
+
+
+@db_session
+def get_user_last_parcel_with_shipment_number(userid: str | int, shipment_number: str):
+    return list(ParcelData.select(lambda p: p.phone_number.user.userid == userid and
+                                    p.shipment_number == shipment_number).order_by(lambda pp: desc(pp.timestamp)))[0]
 
 
 @db_session
