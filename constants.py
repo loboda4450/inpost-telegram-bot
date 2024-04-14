@@ -11,7 +11,8 @@ pending_statuses = [ParcelStatus.READY_TO_PICKUP, ParcelStatus.CONFIRMED,
 
 welcome_message = 'Hello!\nThis is a bot helping you to manage your InPost parcels!\n' \
                   'If you want to contribute to Inpost development you can find us there: ' \
-                  '[Inpost](https://github.com/IFOSSA/inpost-python)\n\n' \
+                  '[Inpost Library](https://github.com/IFOSSA/inpost-python)\n' \
+                  '[Inpost Bot](https://github.com/loboda4450/inpost-telegram-bot)\n\n' \
                   'Log in using button that just shown up below the text box ' \
                   'or by typing `/init <phone_number>`!\n\n' \
                   '**List of commands:**\n' \
@@ -29,14 +30,12 @@ welcome_message = 'Hello!\nThis is a bot helping you to manage your InPost parce
                   '/friends - list all known inpost friends \n' \
                   '/share <reply to parcel message> - share parcel to listed friend\n' \
                   '/all - return all available parcels\n' \
-                  '\n\n\nBeware, before you start using this bot you must **set your consent** to data collecting. ' \
-                  'It will affect all your connected accounts. Dev team assure you, that this data **will not** be ' \
-                  'used or sold and all sensitive ones like your name and surname **will be** removed. ' \
+                  '\n\n\nBeware, this bot collects your parcel informations. Dev team assure you, that this data **will not** be ' \
+                  'used or used against you. ' \
                   'Collected data are used for three reasons:\n' \
-                  '    - cache - if we save your data bot has to less frequently gather data from inpost,\n' \
+                  '    - cache - bot has to less frequently gather data from inpost,\n' \
                   '    - development,\n' \
                   '    - debugging - in case some error occurs.\n' \
-                  '\n\nYou can set your consent by typing `/consent yes` or `/consent no`' \
 
 not_enough_parameters_provided = 'No phone number provided or no option selected!\n' \
            'You can set your default phone number by sending `/set_default_phone_number <phone_number>` ' \
