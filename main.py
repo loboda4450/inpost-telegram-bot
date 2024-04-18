@@ -98,7 +98,7 @@ async def main(config):
                     if not await inp.send_sms_code():
                         await convo.send_message('Could not send sms code! Start initializing again!',
                                                  buttons=Button.clear())
-                        del inp
+
                         return
 
                     await convo.send_message('Phone number accepted, send me sms code that InPost '
@@ -110,13 +110,13 @@ async def main(config):
                         await convo.send_message(
                             'Something is wrong with provided sms code! Start initialization again.',
                             buttons=Button.clear())
-                        del inp
+
                         return
 
                     if not await inp.confirm_sms_code(sms_code=sms_code.text.strip()):
                         await convo.send_message('Something went wrong! Start initialization again.',
                                                  buttons=Button.clear())
-                        del inp
+
                         return
 
                     edit_phone_number_config(event=event,
@@ -148,7 +148,8 @@ async def main(config):
                     await convo.send_message('Bad things happened, call admin now!')
                 finally:
                     convo.cancel()
-                    await inp.disconnect()
+                    await inp.sess.close()
+                    del inp
                     return
 
     @client.on(NewMessage(pattern='/start'))
@@ -239,7 +240,8 @@ async def main(config):
                 await event.reply('Bad things happened, call admin now!')
             finally:
                 convo.cancel()
-                await inp.disconnect()
+                await inp.sess.close()
+                del inp
                 return
 
     @client.on(CallbackQuery(pattern=b'Pending'))
@@ -309,7 +311,8 @@ async def main(config):
                 await event.reply('Bad things happened, call admin now!')
             finally:
                 convo.cancel()
-                await inp.disconnect()
+                await inp.sess.close()
+                del inp
                 return
 
     @client.on(CallbackQuery(pattern='Open Code'))
@@ -361,7 +364,8 @@ async def main(config):
                 await event.reply('Bad things happened, call admin now!')
             finally:
                 convo.cancel()
-                await inp.disconnect()
+                await inp.sess.close()
+                del inp
                 return
 
     # @client.on(NewMessage(pattern='/friends'))
