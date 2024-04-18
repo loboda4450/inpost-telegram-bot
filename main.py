@@ -146,6 +146,10 @@ async def main(config):
                 except Exception as e:
                     logger.exception(e)
                     await convo.send_message('Bad things happened, call admin now!')
+                finally:
+                    convo.cancel()
+                    await inp.disconnect()
+                    return
 
     @client.on(NewMessage(pattern='/start'))
     @client.on(NewMessage(pattern='/help'))
@@ -214,9 +218,8 @@ async def main(config):
 
                 return
 
-            inp = Inpost(**get_inpost_obj(userid=event.sender.id, phone_number=phone_number))
-
             try:
+                inp = Inpost(**get_inpost_obj(userid=event.sender.id, phone_number=phone_number))
                 await send_pcg(shipment_number, inp, phone_number, ParcelType.TRACKED)
 
             except NotAuthenticatedError as e:
@@ -234,6 +237,10 @@ async def main(config):
             except Exception as e:
                 logger.exception(e)
                 await event.reply('Bad things happened, call admin now!')
+            finally:
+                convo.cancel()
+                await inp.disconnect()
+                return
 
     @client.on(CallbackQuery(pattern=b'Pending'))
     @client.on(CallbackQuery(pattern=b'Delivered'))
@@ -302,6 +309,7 @@ async def main(config):
                 await event.reply('Bad things happened, call admin now!')
             finally:
                 convo.cancel()
+                await inp.disconnect()
                 return
 
     @client.on(CallbackQuery(pattern='Open Code'))
@@ -327,8 +335,7 @@ async def main(config):
                     case b'Share':
                         await share_parcel(event, convo, inp, parcel.shipment_number)
                     case b'Open Compartment':
-                        await open_compartment(event, convo, inp, parcel.shipment_number,
-                                               ParcelType['raw_parcel.ptype'])
+                        await open_compartment(event, convo, inp, parcel, ParcelType[raw_parcel.ptype])
                     case _:
                         await convo.send_message('Time has ran out, please start opening compartment again!',
                                                  buttons=[Button.clear()])
@@ -354,6 +361,7 @@ async def main(config):
                 await event.reply('Bad things happened, call admin now!')
             finally:
                 convo.cancel()
+                await inp.disconnect()
                 return
 
     # @client.on(NewMessage(pattern='/friends'))
