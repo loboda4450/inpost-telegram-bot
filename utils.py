@@ -342,8 +342,12 @@ async def open_compartment(event, convo, inp, parcel, parcel_type):
     if (database.get_user_geocheck(userid=event.sender.id) or
             database.get_user_default_parcel_machine(userid=event.sender.id) != p.pickup_point.name):
         user_location = database.get_user_location(userid=event.sender.id)
-        if (datetime.datetime.now() - user_location['location_time']) > datetime.timedelta(
-                minutes=2):
+        if any(loc_val is None for loc_val in user_location.values()):
+            check_location = True
+        else:
+            check_location = (datetime.datetime.now() - user_location['location_time']) > datetime.timedelta(minutes=2)
+
+        if check_location:
             await convo.send_message(
                 'Please share your location so I can check '
                 'whether you are near parcel machine or not.',
