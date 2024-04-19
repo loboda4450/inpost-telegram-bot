@@ -315,11 +315,11 @@ async def main(config):
                 del inp
                 return
 
-    @client.on(CallbackQuery(pattern='Open Code'))
-    @client.on(CallbackQuery(pattern='QR Code'))
-    @client.on(CallbackQuery(pattern='Details'))
-    @client.on(CallbackQuery(pattern='Share'))
-    @client.on(CallbackQuery(pattern='Open Compartment'))
+    @client.on(CallbackQuery(pattern=b'Open Code'))
+    @client.on(CallbackQuery(pattern=b'QR Code'))
+    @client.on(CallbackQuery(pattern=b'Details'))
+    @client.on(CallbackQuery(pattern=b'Share'))
+    @client.on(CallbackQuery(pattern=b'Open Compartment'))
     async def handle_parcel(event):
         async with client.conversation(event.sender.id) as convo:
             try:
