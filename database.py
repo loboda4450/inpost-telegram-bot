@@ -289,6 +289,22 @@ def get_dict():
 
 
 @db_session
+def get_me(userid: str | int):
+    return {
+        phone_number.phone_number: {
+            'phone_number': phone_number.phone_number,
+            'sms_code': phone_number.sms_code,
+            'refr_token': phone_number.refr_token,
+            'auth_token': phone_number.auth_token,
+            'notifications': phone_number.notifications,
+            'default_parcel_machine': phone_number.default_parcel_machine,
+            'geocheck': phone_number.geocheck,
+            'airquality': phone_number.airquality,
+        } for phone_number in select(pn for pn in PhoneNumberConfig if pn.user.userid == userid)
+    }
+
+
+@db_session
 def get_inpost_obj(userid: int, phone_number: str):
     inp: PhoneNumberConfig = PhoneNumberConfig.get(user=userid, phone_number=phone_number)
     if inp is not None:
