@@ -26,7 +26,7 @@ async def init_phone_number(event: NewMessage) -> Tuple[int | str, str] | None:
         return None
     elif (len(event.text.split(' ')) == 2
           and event.text.split()[1].strip()[-9:].isdigit()
-          and 3 <= len(event.text.split()[1][:-9] <= 4)
+          and 3 <= len(event.text.split()[1][:-9]) <= 4
           and event.text.split()[1].strip().startswith("+")):
         return event.text.split(' ', 1)[1][:-9], event.text.split(' ', 1)[1][-9:]
     else:
