@@ -47,7 +47,7 @@ async def confirm_location(event: NewMessage | Message,
     match p.status:
         case ParcelStatus.DELIVERED:
             return 'DELIVERED'
-        case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE | ParcelStatus.PICKUP_REMINDER_SENT:
+        case ParcelStatus.READY_TO_PICKUP | ParcelStatus.STACK_IN_BOX_MACHINE | ParcelStatus.PICKUP_REMINDER_SENT | ParcelStatus.PICKUP_TIME_EXPIRED:
             if (p.pickup_point.latitude - 0.0005 <= loc.lat <= p.pickup_point.latitude + 0.0005) and (
                     p.pickup_point.longitude - 0.0005 <= loc.long <= p.pickup_point.longitude + 0.0005):
                 return 'IN RANGE'
