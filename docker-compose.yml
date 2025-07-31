@@ -2,7 +2,7 @@ version: '3.7'
 
 services:
   inpost:
-    build: .
+    image: ghcr.io/loboda4450/inpost-telegram-bot:bde7c0d87c8d605b0a86a8e424aec5f8f8782028
     volumes:
       - ./config.yml:/app/config.yml:ro
     environment:
