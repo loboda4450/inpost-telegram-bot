@@ -7,9 +7,6 @@ on:
 
 jobs:
   build:
-    env:
-      IMAGE_NAME: inpost-telegram-bot
-
     runs-on: ubuntu-latest
     permissions:
       contents: read
